@@ -319,11 +319,12 @@ Foreground 高优先级；不同 Session 的独立 Run 可在限额内并行。�
 
 | 配置项 | 含义 |
 | --- | --- |
+| name | 用户自定义供应商名称，只用于显示；旧配置可缺省并使用地址域名显示，改名不改变内部接入项 ID |
 | protocol | openai / anthropic，用于选择协议族 |
 | apiType | openai 下选择 chat_completions / responses；anthropic 固定为 messages，无需额外选择 |
 | url | 自定义 API Base URL，不绑定官方域名；界面按协议说明版本前缀和请求路径的拼接规则 |
 | key | 验证期直接保存于本地配置文件，退出后保留；不使用 Keychain，不要求额外解锁 |
-| modelNames | 一个或多个非空模型名，按用户填写的原始名称调用，不依赖预置模型白名单或自动发现接口 |
+| modelNames | 一个或多个非空模型名，通过列表逐项添加和移除，按用户填写的名称调用，不依赖预置模型白名单或自动发现接口；移除默认模型会清空默认选择 |
 
 调用时以接入项 ID + model_name 标识模型，避免不同 URL 或 API 类型下的同名模型混淆。保存时校验 URL 格式、protocol 与 apiType 的合法组合及模型名列表；Key 仅保存在本地配置文件，不进入 SQLite、上下文、默认备份导出或日志，仅发送给该接入项指定的端点，不随跨源重定向转发。已有 Run 的绑定目标与当前接入配置不一致时明确阻塞，不将新配置的 Key 用于旧端点。
 

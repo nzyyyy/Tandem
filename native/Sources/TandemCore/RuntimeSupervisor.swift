@@ -5,6 +5,7 @@ import Darwin
 @MainActor
 public final class RuntimeSupervisor: ObservableObject {
     @Published public private(set) var status = "未启动"
+    @Published public private(set) var isConnected = false
     @Published public private(set) var logs: [String] = []
     @Published public private(set) var nodePID: Int32 = 0
     @Published public private(set) var pongCount = 0
@@ -77,6 +78,7 @@ public final class RuntimeSupervisor: ObservableObject {
                                       hello["nodeVersion"] as? String == "v24.22.2" else { throw IPCError.peer }
                                 return client
                             }.value
+                            isConnected = true
                             connectionCount += 1
                             log("ipc_connected")
                         }
@@ -93,6 +95,7 @@ public final class RuntimeSupervisor: ObservableObject {
                         try await Task.sleep(for: .seconds(1))
                     } catch {
                         connection = nil
+                        isConnected = false
                         if Task.isCancelled || stopping { break }
                         failures += 1
                         status = "连接中断，正在重连"
@@ -119,6 +122,7 @@ public final class RuntimeSupervisor: ObservableObject {
 
     private func reap() async {
         log("runtime_stopping")
+        isConnected = false
         connection = nil
         try? input?.fileHandleForWriting.close()
         input = nil
@@ -141,6 +145,7 @@ public final class RuntimeSupervisor: ObservableObject {
 
     public func stop() async {
         stopping = true
+        isConnected = false
         worker?.cancel()
         // The worker owns all socket I/O and cleanup; cancellation stops dispatch first.
         await worker?.value
@@ -148,7 +153,7 @@ public final class RuntimeSupervisor: ObservableObject {
         log("runtime_stopped")
     }
 
-    public func reconnect() { connection = nil }
+    public func reconnect() { connection = nil; isConnected = false }
     public func injectCrash() { if let process, process.isRunning { kill(process.processIdentifier, SIGKILL) } }
 
     public func request(_ method: String, payload: [String: Any] = [:]) async throws -> [String: Any] {

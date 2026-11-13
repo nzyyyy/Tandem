@@ -5,7 +5,7 @@ import { AppError, record, requireValue, text } from './errors.ts';
 
 export type ModelSelection = { connectionId: string; modelName: string };
 export type Connection = {
-  id: string; protocol: 'openai' | 'anthropic'; apiType: 'chat_completions' | 'responses' | 'messages';
+  id: string; name?: string; protocol: 'openai' | 'anthropic'; apiType: 'chat_completions' | 'responses' | 'messages';
   url: string; key: string; modelNames: string[];
 };
 export type AppConfig = { schemaVersion: 1; modelConnections: Connection[]; defaultModel: ModelSelection | null };
@@ -28,6 +28,8 @@ export function validateConfig(value: unknown): AppConfig {
     const id = text(item.id);
     requireValue(/^[a-zA-Z0-9._-]+$/.test(id), 'CONFIG_CONNECTION_ID');
     requireValue(!ids.has(id), 'CONFIG_DUPLICATE_ID'); ids.add(id);
+    requireValue(item.name === undefined || (typeof item.name === 'string' && item.name.trim().length > 0
+      && item.name.length <= 120 && !/[\x00-\x1f\x7f]/.test(item.name)), 'CONFIG_CONNECTION_NAME');
     requireValue((item.protocol === 'openai' && ['chat_completions', 'responses'].includes(item.apiType))
       || (item.protocol === 'anthropic' && item.apiType === 'messages'), 'CONFIG_PROTOCOL');
     const url = text(item.url, 2048);
@@ -40,7 +42,7 @@ export function validateConfig(value: unknown): AppConfig {
     const modelNames = item.modelNames.map((name: unknown) => text(name, 256));
     requireValue(modelNames.every((name: string) => !/[\x00-\x1f\x7f]/.test(name)), 'CONFIG_MODELS');
     requireValue(new Set(modelNames).size === modelNames.length, 'CONFIG_MODELS');
-    return { id, protocol: item.protocol, apiType: item.apiType, url, key: item.key, modelNames };
+    return { id, ...(item.name === undefined ? {} : { name: item.name.trim() }), protocol: item.protocol, apiType: item.apiType, url, key: item.key, modelNames };
   });
   let defaultModel: ModelSelection | null = null;
   if (config.defaultModel != null) {

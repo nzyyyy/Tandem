@@ -61,7 +61,7 @@ export class AppService {
       const messages = this.store.timeline();
       const changes = this.store.changes(payload.afterSequence);
       return { projects: this.context.projects(), pendingInteractions: this.context.pending(surfaceId), focus: this.store.focus(surfaceId), configError: this.configError,
-        models: config.modelConnections.flatMap(item => item.modelNames.map(modelName => ({ connectionId: item.id, modelName, apiType: item.apiType }))),
+        models: config.modelConnections.flatMap(item => item.modelNames.map(modelName => ({ connectionId: item.id, connectionName: item.name ?? new URL(item.url).hostname, modelName, apiType: item.apiType }))),
         defaultModel: config.defaultModel, messages, changedMessages: changes.messages, cursor: changes.cursor, hasMore: messages.length === 10,
         sessions: this.context.sessions(surfaceId) };
     }

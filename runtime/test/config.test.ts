@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, symlinkSync } from 'node:fs';
-import { ConfigStore, emptyConfig, validateConfig, redact } from '../src/config.ts';
+import { ConfigStore, emptyConfig, validateConfig, redact, bindModel } from '../src/config.ts';
 
 export const fixtureConfig = () => ({ schemaVersion: 1 as const, modelConnections: [
   { id: 'primary', protocol: 'openai' as const, apiType: 'responses' as const, url: 'https://example.com/v1', key: 'test-private-key', modelNames: ['same-model', 'second-model'] }
@@ -42,5 +42,25 @@ test('validate protocols, model identity and URL credential boundaries', () => {
     writeFileSync(`${dir}/source`, JSON.stringify(base));
     symlinkSync(`${dir}/source`, `${dir}/config.json`);
     assert.throws(() => new ConfigStore(dir).read());
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test('provider names round-trip without changing legacy IDs or model bindings', () => {
+  const legacy = fixtureConfig();
+  assert.deepEqual(validateConfig(legacy), legacy);
+  const dir = mkdtempSync('/tmp/tandem-provider-');
+  try {
+    const store = new ConfigStore(dir);
+    const first = store.save({ ...legacy, modelConnections: [{ ...legacy.modelConnections[0], name: ' 我的供应商 ' }] }, 'missing');
+    assert.equal(first.config.modelConnections[0].name, '我的供应商');
+    assert.equal(new ConfigStore(dir).read().config.modelConnections[0].name, '我的供应商');
+    const renamed = store.save({ ...first.config, modelConnections: [{ ...first.config.modelConnections[0], name: '备用供应商' }] }, first.revision);
+    assert.deepEqual(renamed.config.defaultModel, legacy.defaultModel);
+    assert.equal(bindModel(renamed.config).id, 'primary');
+    assert.equal(bindModel(renamed.config).modelName, 'same-model');
+    for (const name of ['', '   ', null, 42, 'a\nb', 'a\u0000b', 'x'.repeat(121)]) {
+      assert.throws(() => validateConfig({ ...legacy, modelConnections: [{ ...legacy.modelConnections[0], name }] }), /CONFIG_CONNECTION_NAME/);
+    }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

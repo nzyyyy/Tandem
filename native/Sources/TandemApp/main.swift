@@ -106,6 +106,7 @@ struct TandemApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
         WindowGroup("Tandem", id: "main") { AssistantView(runtime: delegate.runtime) }
+            .defaultSize(width: 1280, height: 820)
     }
 }
 
@@ -123,7 +124,25 @@ func smokeTest() async {
         throw NSError(domain: "SmokeTimeout", code: 1)
     }
     do {
+        let assistant = AssistantModel(runtime: runtime)
+        let polling = Task { await assistant.poll(surfaceId: "smoke") }
+        defer { polling.cancel() }
+        try await Task.sleep(for: .milliseconds(150))
+        guard assistant.snapshot == nil, assistant.error == nil, !runtime.isConnected else { throw IPCError.response }
+        var mainActorTicks = 0
+        let responsiveness = Task { @MainActor in
+            while !Task.isCancelled {
+                mainActorTicks += 1
+                do { try await Task.sleep(for: .milliseconds(25)) } catch { break }
+            }
+        }
+        defer { responsiveness.cancel() }
+        let startup = ContinuousClock.now
         runtime.start(node: URL(fileURLWithPath: arguments[2]), entry: URL(fileURLWithPath: arguments[3]), dataDirectory: dataDirectory)
+        try await waitFor { assistant.snapshot != nil }
+        let elapsed = startup.duration(to: .now)
+        print("[smoke] cold-start snapshot ready after \(elapsed), main-actor ticks=\(mainActorTicks)")
+        guard elapsed < .seconds(5), mainActorTicks >= 2, assistant.error == nil else { throw IPCError.response }
         try await waitFor { runtime.pongCount >= 1 }
         let document = try await runtime.request("config.get")
         guard document["revision"] as? String == "missing" else { throw IPCError.response }
@@ -136,9 +155,7 @@ func smokeTest() async {
         let state = try await runtime.request("state.get", payload: ["surfaceId": "smoke"])
         let snapshot = try JSONDecoder().decode(AssistantSnapshot.self, from: JSONSerialization.data(withJSONObject: state))
         guard snapshot.defaultModel?.modelName == "smoke-model" else { throw IPCError.response }
-        let assistant = AssistantModel(runtime: runtime)
-        let polling = Task { await assistant.poll(surfaceId: "smoke") }
-        try await waitFor { assistant.snapshot != nil }
+        await assistant.refresh()
         for (index, connectionId) in ["smoke", "chat", "anthropic"].enumerated() {
             assistant.selectedModel = index == 0 ? "" : ModelSelection(connectionId: connectionId, modelName: "smoke-model").identifier
             assistant.draft = "你好 \(index)"

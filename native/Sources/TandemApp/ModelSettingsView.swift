@@ -3,56 +3,149 @@ import TandemCore
 
 struct ModelSettingsView: View {
     @ObservedObject var model: AssistantModel
+    @Binding var hasUnsavedChanges: Bool
+    @Binding var busy: Bool
+    @State private var loading = false
+    private var isWorking: Bool { busy || loading }
     @State private var configuration = AppConfiguration()
+    @State private var savedConfiguration = AppConfiguration()
     @State private var revision: String?
     @State private var notice: String?
-    @State private var busy = false
+    @State private var selected = ""
+    @State private var confirmReload = false
+    @State private var modelDrafts: [String: String] = [:]
+
+    private var hasModelDrafts: Bool { modelDrafts.values.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } }
+    private var dirty: Bool { configuration != savedConfiguration || hasModelDrafts }
+    private func providerName(_ id: String) -> String { configuration.modelConnections.first { $0.id == id }?.displayName ?? "已移除供应商" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("模型设置").font(.title2.weight(.semibold))
-                Spacer()
-                Button("重新加载") { Task { await load() } }.disabled(busy)
-                Button("保存") { Task { await save() } }.buttonStyle(.borderedProminent).disabled(busy || revision == nil)
+        VStack(spacing: 0) {
+            PageHeader(title: "模型设置") {
+                if isWorking { ProgressView().controlSize(.small) }
+                if dirty { Text("未保存修改").font(.caption).foregroundStyle(TandemStyle.secondary) }
+                Button("重新加载") {
+                    if dirty { confirmReload = true } else { Task { await load() } }
+                }.disabled(isWorking)
+                Button("保存配置") { Task { await save() } }
+                    .buttonStyle(TandemButtonStyle(.primary)).disabled(isWorking || revision == nil || hasModelDrafts)
             }
-            .padding(20)
-            Divider()
-            Form {
-                Section("默认模型") {
-                    Picker("全局默认", selection: $configuration.defaultModel) {
-                        Text("未设置").tag(Optional<ModelSelection>.none)
-                        ForEach(configuration.modelConnections) { connection in
-                            ForEach(Array(connection.modelNames.enumerated()), id: \.offset) { _, name in
-                                if !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                    Text("\(name) · \(connection.id)").tag(Optional(ModelSelection(connectionId: connection.id, modelName: name)))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 32) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("连接你的模型").font(.system(size: 24, weight: .semibold))
+                        Text("管理模型接入与默认选择。").font(.system(size: 14)).foregroundStyle(TandemStyle.secondary)
+                    }
+                    defaultModel
+                    HStack {
+                        Text("模型供应商").font(.system(size: 15, weight: .semibold))
+                        Spacer()
+                        Button {
+                            let connection = ModelConnection.new()
+                            configuration.modelConnections.append(connection); selected = connection.id
+                        } label: { Label("添加供应商", systemImage: "plus") }.disabled(revision == nil || isWorking)
+                    }
+                    if configuration.modelConnections.isEmpty {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Label("还没有供应商", systemImage: "network").font(.headline)
+                            Text("添加供应商，填写名称、地址和 API Key，再逐项添加模型。")
+                                .font(.callout).foregroundStyle(TandemStyle.secondary)
+                        }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+                    } else {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(alignment: .top, spacing: 28) {
+                                connectionList.frame(width: 196)
+                                Divider()
+                                connectionDetail.frame(minWidth: 400, maxWidth: .infinity)
+                            }.frame(minWidth: 653)
+                            VStack(alignment: .leading, spacing: 24) {
+                                TandemPicker(title: "模型供应商", value: providerName(selected), selection: $selected) {
+                                    ForEach(configuration.modelConnections) { Text($0.displayName).tag($0.id) }
                                 }
+                                connectionDetail
                             }
                         }
                     }
-                    Text("默认模型用于新消息；手动选择优先。已有回答与排队中的请求保留原模型。").font(.callout).foregroundStyle(.secondary)
-                }
-                ForEach($configuration.modelConnections) { $connection in
-                    Section {
-                        ConnectionEditor(connection: $connection)
-                        Button("移除此接入项", role: .destructive) {
-                            let id = connection.id
-                            configuration.modelConnections.removeAll { $0.id == id }
-                            if configuration.defaultModel?.connectionId == id { configuration.defaultModel = nil }
-                        }
-                    } header: { Text("接入项 · \(connection.id)").textSelection(.enabled) }
-                }
-                Button { configuration.modelConnections.append(.new()) } label: { Label("添加接入项", systemImage: "plus") }
-                    .disabled(revision == nil)
-                Section("本机保存") {
-                    Text("API Key 以明文保存在当前用户可读写的 config.json。正常退出后保留，不写入聊天数据库或日志。")
-                    Text("~/.tandem/config.json").font(.caption.monospaced()).textSelection(.enabled)
-                }
-                if let notice { Section { Text(notice).textSelection(.enabled) } }
+                    if let notice {
+                        Label(notice, systemImage: notice == "已保存。" ? "checkmark.circle" : "info.circle")
+                            .font(.callout).textSelection(.enabled)
+                            .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 10))
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("本机保存", systemImage: "internaldrive").font(.system(size: 13, weight: .medium))
+                        Text("API Key 以明文保存在当前用户可读写的 config.json。正常退出后保留，不写入聊天数据库或日志。")
+                            .font(.caption).foregroundStyle(TandemStyle.secondary)
+                        Text("~/.tandem/config.json").font(.caption.monospaced()).foregroundStyle(TandemStyle.secondary).textSelection(.enabled)
+                    }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+                }.padding(32).frame(maxWidth: 1060, alignment: .leading).frame(maxWidth: .infinity)
             }
-            .formStyle(.grouped)
+            .disabled(isWorking)
         }
+        .textFieldStyle(TandemTextFieldStyle())
         .task { await load() }
+        .onChange(of: dirty, initial: true) { _, value in hasUnsavedChanges = value }
+        .confirmationDialog("放弃修改并重新加载？", isPresented: $confirmReload) {
+            Button("放弃修改并重新加载", role: .destructive) { Task { await load() } }
+            Button("继续编辑", role: .cancel) { }
+        } message: { Text("将从本机配置重新读取所有接入项。") }
+    }
+
+    private var defaultModel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("全局默认模型", systemImage: "circle.hexagongrid").font(.system(size: 14, weight: .semibold))
+            TandemPicker(title: "全局默认", value: configuration.defaultModel.map { "\($0.modelName) · \(providerName($0.connectionId))" } ?? "未设置", selection: $configuration.defaultModel) {
+                Text("未设置").tag(Optional<ModelSelection>.none)
+                ForEach(configuration.modelConnections) { connection in
+                    ForEach(Array(connection.modelNames.enumerated()), id: \.offset) { _, name in
+                        if !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text("\(name) · \(connection.displayName)").tag(Optional(ModelSelection(connectionId: connection.id, modelName: name)))
+                        }
+                    }
+                }
+            }.labelsHidden().frame(maxWidth: 420).disabled(revision == nil).accessibilityLabel("全局默认模型")
+            Text("手动选择优先；已有回答与排队中的请求保留原模型。")
+                .font(.caption).foregroundStyle(TandemStyle.secondary)
+        }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+            .background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var connectionList: some View {
+        VStack(spacing: 6) {
+            ForEach(configuration.modelConnections) { connection in
+                SelectionRow(title: connection.displayName, symbol: "network",
+                             subtitle: connection.protocolName == "anthropic" ? "Anthropic 兼容" : "OpenAI 兼容",
+                             selected: selected == connection.id) { selected = connection.id }
+            }
+        }
+    }
+
+    private var connectionDetail: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            ForEach($configuration.modelConnections) { $connection in
+                if connection.id == selected {
+                    Text("供应商设置").font(.system(size: 17, weight: .semibold))
+                    ConnectionEditor(connection: $connection, newModelName: Binding(
+                        get: { modelDrafts[connection.id] ?? "" },
+                        set: { modelDrafts[connection.id] = $0 }
+                    ), removeModel: { name in
+                        let id = connection.id
+                        configuration.removeModel(name, from: id)
+                    })
+                    .id(connection.id)
+                    Button("移除此供应商", role: .destructive) {
+                        let id = connection.id
+                        configuration.modelConnections.removeAll { $0.id == id }
+                        modelDrafts.removeValue(forKey: id)
+                        if configuration.defaultModel?.connectionId == id { configuration.defaultModel = nil }
+                        selected = configuration.modelConnections.first?.id ?? ""
+                    }
+                    .disabled(isWorking || revision == nil)
+                }
+            }
+        }.disabled(revision == nil)
     }
 
     private func errorMessage(_ error: Error) -> String {
@@ -60,12 +153,13 @@ struct ModelSettingsView: View {
         return "无法读取或保存本地配置，请检查运行状态后重试。"
     }
     private func load() async {
-        busy = true
-        defer { busy = false }
+        loading = true
+        defer { loading = false }
         do {
             let document = try await model.call("config.get", as: ConfigDocument.self)
-            configuration = document.config; revision = document.revision; notice = nil
-        } catch { revision = nil; notice = errorMessage(error) }
+            configuration = document.config; savedConfiguration = document.config; revision = document.revision; notice = nil; modelDrafts = [:]
+            if !configuration.modelConnections.contains(where: { $0.id == selected }) { selected = configuration.modelConnections.first?.id ?? "" }
+        } catch { notice = errorMessage(error) }
     }
     private func save() async {
         guard let revision else { return }
@@ -75,7 +169,7 @@ struct ModelSettingsView: View {
             let encoded = try JSONEncoder().encode(configuration)
             let config = try JSONSerialization.jsonObject(with: encoded)
             let document = try await model.call("config.save", payload: ["config": config, "expectedRevision": revision], as: ConfigDocument.self)
-            configuration = document.config; self.revision = document.revision; notice = "已保存。"
+            configuration = document.config; savedConfiguration = document.config; self.revision = document.revision; notice = "已保存。"
             await model.refresh()
         } catch { notice = errorMessage(error) }
     }
@@ -83,29 +177,78 @@ struct ModelSettingsView: View {
 
 private struct ConnectionEditor: View {
     @Binding var connection: ModelConnection
+    @Binding var newModelName: String
+    let removeModel: (String) -> Void
     var body: some View {
-        Picker("协议", selection: $connection.protocolName) {
-            Text("OpenAI 兼容").tag("openai")
-            Text("Anthropic 兼容").tag("anthropic")
+        EditorField(title: "供应商名称") {
+            TextField("例如 OpenAI、我的模型服务", text: Binding(get: { connection.name ?? connection.displayName }, set: { connection.name = $0 }))
+                .accessibilityLabel("供应商名称")
         }
-        .onChange(of: connection.protocolName) { _, value in
-            connection.apiType = value == "anthropic" ? "messages" : "chat_completions"
-            if connection.url == "https://api.openai.com/v1" && value == "anthropic" { connection.url = "https://api.anthropic.com/v1" }
-            else if connection.url == "https://api.anthropic.com/v1" && value == "openai" { connection.url = "https://api.openai.com/v1" }
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 20) { protocolPicker; apiType }.frame(minWidth: 440)
+            VStack(alignment: .leading, spacing: 24) { protocolPicker; apiType }
         }
-        if connection.protocolName == "openai" {
-            Picker("API 类型", selection: $connection.apiType) {
-                Text("Chat Completions").tag("chat_completions")
-                Text("Responses").tag("responses")
+        EditorField(title: "API Base URL") {
+            TextField("https://api.example.com/v1", text: $connection.url).textContentType(.URL).accessibilityLabel("API Base URL")
+        }
+        Text("将追加 /\(connection.apiType == "chat_completions" ? "chat/completions" : connection.apiType)。需要 /v1 的服务，请在 Base URL 中包含 /v1。")
+            .font(.caption).foregroundStyle(TandemStyle.secondary)
+        EditorField(title: "API Key") { SecureField("输入 API Key", text: $connection.key).accessibilityLabel("API Key") }
+        EditorField(title: "模型（\(connection.modelNames.count)/20）") {
+            VStack(alignment: .leading, spacing: 12) {
+                if connection.modelNames.isEmpty {
+                    Text("还没有模型，请在下方添加。").font(.callout).foregroundStyle(TandemStyle.secondary)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(connection.modelNames, id: \.self) { name in
+                            HStack(spacing: 12) {
+                                Text(name).font(.system(size: 14)).textSelection(.enabled)
+                                Spacer(minLength: 12)
+                                Button(role: .destructive) { removeModel(name) } label: { Image(systemName: "minus.circle") }
+                                    .buttonStyle(TandemButtonStyle(.plain)).accessibilityLabel("移除模型 " + name).help("移除模型")
+                            }.padding(12)
+                            if name != connection.modelNames.last { Divider() }
+                        }
+                    }.background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 8))
+                }
+                HStack(spacing: 12) {
+                    TextField("输入模型名，例如 model-a", text: $newModelName)
+                        .accessibilityLabel("新模型名称").onSubmit(addModel)
+                    Button(action: addModel) { Label("添加", systemImage: "plus") }
+                        .disabled(connection.modelAdditionError(newModelName) != nil)
+                }
+                if !newModelName.isEmpty {
+                    Text(connection.modelAdditionError(newModelName) ?? "点击添加后，再保存配置。")
+                        .font(.caption).foregroundStyle(TandemStyle.secondary)
+                }
             }
-        } else { LabeledContent("API 类型", value: "Messages") }
-        TextField("API Base URL", text: $connection.url)
-            .textContentType(.URL)
-        Text("将追加 /\(connection.apiType == "chat_completions" ? "chat/completions" : connection.apiType)。需要 /v1 的服务，请在 Base URL 中包含 /v1。").font(.caption).foregroundStyle(.secondary)
-        SecureField("API Key", text: $connection.key)
-        TextField("模型名（每行一个）", text: Binding(
-            get: { connection.modelNames.joined(separator: "\n") },
-            set: { connection.modelNames = $0.components(separatedBy: "\n") }
-        ), axis: .vertical).lineLimit(2...8)
+        }
+    }
+    private func addModel() {
+        if connection.addModel(newModelName) { newModelName = "" }
+    }
+
+    private var protocolPicker: some View {
+        EditorField(title: "协议") {
+            TandemPicker(title: "协议", value: connection.protocolName == "anthropic" ? "Anthropic 兼容" : "OpenAI 兼容", selection: $connection.protocolName) {
+                Text("OpenAI 兼容").tag("openai")
+                Text("Anthropic 兼容").tag("anthropic")
+            }.labelsHidden().accessibilityLabel("协议")
+            .onChange(of: connection.protocolName) { _, value in
+                connection.apiType = value == "anthropic" ? "messages" : "chat_completions"
+                if connection.url == "https://api.openai.com/v1" && value == "anthropic" { connection.url = "https://api.anthropic.com/v1" }
+                else if connection.url == "https://api.anthropic.com/v1" && value == "openai" { connection.url = "https://api.openai.com/v1" }
+            }
+        }
+    }
+    private var apiType: some View {
+        EditorField(title: "API 类型") {
+            if connection.protocolName == "openai" {
+                TandemPicker(title: "API 类型", value: connection.apiType == "responses" ? "Responses" : "Chat Completions", selection: $connection.apiType) {
+                    Text("Chat Completions").tag("chat_completions")
+                    Text("Responses").tag("responses")
+                }.labelsHidden().accessibilityLabel("API 类型")
+            } else { Text("Messages").font(.system(size: 14)).padding(.vertical, 4) }
+        }
     }
 }

@@ -8,7 +8,8 @@ let package = Package(
     targets: [
         .target(name: "TandemCore"),
         .executableTarget(name: "TandemApp", dependencies: ["TandemCore"]),
-        .testTarget(name: "TandemCoreTests", dependencies: ["TandemCore"])
+        .testTarget(name: "TandemCoreTests", dependencies: ["TandemCore"]),
+        .testTarget(name: "TandemAppTests", dependencies: ["TandemApp"])
     ],
     swiftLanguageModes: [.v5]
 )

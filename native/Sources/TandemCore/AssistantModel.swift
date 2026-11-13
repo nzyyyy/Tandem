@@ -10,14 +10,32 @@ public struct ModelSelection: Codable, Equatable, Hashable {
 
 public struct ModelConnection: Codable, Equatable, Identifiable {
     public var id: String
+    public var name: String? = nil
     public var protocolName: String
     public var apiType: String
     public var url: String
     public var key: String
     public var modelNames: [String]
-    enum CodingKeys: String, CodingKey { case id, protocolName = "protocol", apiType, url, key, modelNames }
+    enum CodingKeys: String, CodingKey { case id, name, protocolName = "protocol", apiType, url, key, modelNames }
+    public var displayName: String {
+        if let name { return name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "未命名供应商" : name }
+        return URL(string: url)?.host ?? "未命名供应商"
+    }
+    public func modelAdditionError(_ input: String) -> String? {
+        let model = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if model.isEmpty { return "请输入模型名。" }
+        if model.utf16.count > 256 || model.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) { return "模型名不能超过 256 个字符或包含控制字符。" }
+        if modelNames.contains(model) { return "该模型已添加。" }
+        if modelNames.count >= 20 { return "每个供应商最多添加 20 个模型。" }
+        return nil
+    }
+    @discardableResult public mutating func addModel(_ input: String) -> Bool {
+        guard modelAdditionError(input) == nil else { return false }
+        modelNames.append(input.trimmingCharacters(in: .whitespacesAndNewlines))
+        return true
+    }
     public static func new() -> ModelConnection {
-        ModelConnection(id: UUID().uuidString, protocolName: "openai", apiType: "chat_completions", url: "https://api.openai.com/v1", key: "", modelNames: [""])
+        ModelConnection(id: UUID().uuidString, name: "", protocolName: "openai", apiType: "chat_completions", url: "https://api.openai.com/v1", key: "", modelNames: [])
     }
 }
 
@@ -26,11 +44,17 @@ public struct AppConfiguration: Codable, Equatable {
     public var modelConnections: [ModelConnection] = []
     public var defaultModel: ModelSelection? = nil
     public init() {}
+    public mutating func removeModel(_ modelName: String, from connectionId: String) {
+        guard let index = modelConnections.firstIndex(where: { $0.id == connectionId }) else { return }
+        modelConnections[index].modelNames.removeAll { $0 == modelName }
+        if defaultModel == ModelSelection(connectionId: connectionId, modelName: modelName) { defaultModel = nil }
+    }
 }
 
 public struct ConfigDocument: Codable { public var config: AppConfiguration; public var revision: String }
 public struct ModelOption: Codable, Equatable, Identifiable {
     public var connectionId: String
+    public var connectionName: String? = nil
     public var modelName: String
     public var apiType: String
     public var id: String { connectionId + "\u{0}" + modelName }
@@ -175,6 +199,7 @@ public func userFacingError(_ code: String) -> String {
         "CONFIG_CONFLICT": "配置文件已被修改。请重新加载后再保存。",
         "CONFIG_INVALID_JSON": "config.json 格式无效，请修复文件后重新加载。",
         "CONFIG_VERSION": "配置文件版本不受支持，未覆盖原文件。",
+        "CONFIG_CONNECTION_NAME": "请填写不超过 120 个字符且不含控制字符的供应商名称。",
         "CONFIG_PROTOCOL": "协议与 API 类型不匹配。",
         "CONFIG_URL": "请填写不含账号、查询参数或片段的 API Base URL。",
         "CONFIG_HTTPS_REQUIRED": "远程模型地址须使用 HTTPS；本机测试地址可使用 HTTP。",
@@ -230,8 +255,8 @@ public final class AssistantModel: ObservableObject {
     public func poll(surfaceId: String) async {
         self.surfaceId = surfaceId
         while !Task.isCancelled {
-            await refresh()
-            do { try await Task.sleep(for: .milliseconds(400)) } catch { break }
+            if runtime.isConnected { await refresh() }
+            do { try await Task.sleep(for: .milliseconds(snapshot == nil ? 100 : 400)) } catch { break }
         }
     }
 
@@ -341,6 +366,10 @@ public final class AssistantModel: ObservableObject {
 
     public func context(_ id: String) async throws -> RunContext {
         try await call("snapshot.get", payload: ["id": id, "surfaceId": surfaceId], as: RunContext.self)
+    }
+
+    public func connectionTitle(_ id: String?) -> String {
+        snapshot?.models.first { $0.connectionId == id }?.connectionName ?? "历史供应商"
     }
 
     public func projectTitle(_ id: String?) -> String {
