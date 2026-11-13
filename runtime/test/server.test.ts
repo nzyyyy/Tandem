@@ -66,7 +66,7 @@ test('runtime exits when its inherited host pipe closes', { timeout: 8000 }, asy
   const child = spawn(process.execPath, [fileURLToPath(new URL('../src/main.ts', import.meta.url))], { stdio: ['pipe', 'ignore', 'pipe'] });
   try {
     const output = once(child.stderr, 'data');
-    child.stdin.write(JSON.stringify({ socketPath: `${dir}/s`, token: 'a'.repeat(64), hostPid: process.pid }) + '\n');
+    child.stdin.write(JSON.stringify({ socketPath: `${dir}/s`, token: 'a'.repeat(64), hostPid: process.pid, dataDirectory: `${dir}/data` }) + '\n');
     const [message] = await output;
     assert.match(message.toString(), /\[runtime\] ready/);
     const exited = once(child, 'exit');

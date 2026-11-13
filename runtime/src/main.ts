@@ -1,4 +1,9 @@
 import { startRuntime } from './server.ts';
+import { AppService } from './service.ts';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+process.umask(0o077);
 
 if (process.platform !== 'darwin' || process.arch !== 'arm64' || process.version !== 'v24.22.2') {
   console.error('[runtime] unsupported_platform_or_node');
@@ -14,7 +19,10 @@ process.stdin.on('data', chunk => {
   if (!bootstrap.endsWith('\n')) return;
   clearTimeout(timer);
   try {
-    const runtime = startRuntime(JSON.parse(bootstrap));
+    const config = JSON.parse(bootstrap);
+    const service = new AppService(config.dataDirectory ?? join(homedir(), '.tandem'));
+    const runtime = startRuntime(config, service);
+    bootstrap = '';
     process.stdin.removeAllListeners('data');
     process.stdin.on('end', runtime.stop);
     process.on('SIGTERM', runtime.stop);

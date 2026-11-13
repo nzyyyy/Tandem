@@ -3,10 +3,12 @@ import { chmodSync, lstatSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import { FrameDecoder, encodeFrame } from './protocol.ts';
+import { AppError } from './errors.ts';
+import type { AppService } from './service.ts';
 
 type Bootstrap = { socketPath: string; token: string; hostPid: number };
 
-export function startRuntime(config: Bootstrap) {
+export function startRuntime(config: Bootstrap, service?: AppService) {
   const parent = lstatSync(dirname(config.socketPath));
   if (!parent.isDirectory() || parent.uid !== process.getuid!() || (parent.mode & 0o777) !== 0o700
       || config.hostPid !== process.ppid || !/^[a-f0-9]{64}$/.test(config.token)) {
@@ -38,8 +40,13 @@ export function startRuntime(config: Bootstrap) {
           } else if (request.method === 'ping') {
             reply({ pong: true, pid: process.pid });
           } else {
-            socket.write(encodeFrame({ protocolVersion: 1, requestId: request.requestId, ok: false,
-              error: { code: 'METHOD_NOT_FOUND', retryable: false } }));
+            try {
+              if (!service) throw new AppError('METHOD_NOT_FOUND');
+              reply(service.dispatch(request.method, request.payload));
+            } catch (error) {
+              socket.write(encodeFrame({ protocolVersion: 1, requestId: request.requestId, ok: false,
+                error: { code: error instanceof AppError ? error.code : 'LOCAL_STORAGE_ERROR', retryable: false } }));
+            }
           }
         }
       } catch {
@@ -56,6 +63,7 @@ export function startRuntime(config: Bootstrap) {
   function stop() {
     for (const socket of clients) socket.destroy();
     server.close();
+    if (service) void service.stop().catch(() => { console.error('[runtime] shutdown_failed'); process.exitCode = 1; });
   }
   return { server, stop };
 }

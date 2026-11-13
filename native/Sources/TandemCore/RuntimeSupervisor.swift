@@ -26,13 +26,13 @@ public final class RuntimeSupervisor: ObservableObject {
         FileHandle.standardError.write(Data((line + "\n").utf8))
     }
 
-    public func start(node: URL, entry: URL) {
+    public func start(node: URL, entry: URL, dataDirectory: URL? = nil) {
         guard worker == nil else { return }
         stopping = false
-        worker = Task { await supervise(node: node, entry: entry) }
+        worker = Task { await supervise(node: node, entry: entry, dataDirectory: dataDirectory) }
     }
 
-    private func supervise(node: URL, entry: URL) async {
+    private func supervise(node: URL, entry: URL, dataDirectory: URL?) async {
         var attempt = 0
         while !Task.isCancelled && !stopping {
             var healthyPings = 0
@@ -57,9 +57,11 @@ public final class RuntimeSupervisor: ObservableObject {
                 input = pipe
                 nodePID = child.processIdentifier
                 log("runtime_started pid=\(nodePID)")
-                var bootstrap = try JSONSerialization.data(withJSONObject: [
+                var bootstrapObject: [String: Any] = [
                     "socketPath": socketPath, "token": token, "hostPid": ProcessInfo.processInfo.processIdentifier
-                ])
+                ]
+                if let dataDirectory { bootstrapObject["dataDirectory"] = dataDirectory.path }
+                var bootstrap = try JSONSerialization.data(withJSONObject: bootstrapObject)
                 bootstrap.append(10)
                 try pipe.fileHandleForWriting.write(contentsOf: bootstrap)
                 var failures = 0
@@ -148,4 +150,9 @@ public final class RuntimeSupervisor: ObservableObject {
 
     public func reconnect() { connection = nil }
     public func injectCrash() { if let process, process.isRunning { kill(process.processIdentifier, SIGKILL) } }
+
+    public func request(_ method: String, payload: [String: Any] = [:]) async throws -> [String: Any] {
+        guard !stopping, let client = connection else { throw IPCError.remote("RUNTIME_DISCONNECTED") }
+        return try await Task.detached { try client.request(method, payload: payload) }.value
+    }
 }

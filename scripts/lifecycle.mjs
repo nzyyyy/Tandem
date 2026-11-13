@@ -1,10 +1,15 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
 
-const result = spawnSync(resolve('dist/Tandem.app/Contents/MacOS/Tandem'), ['--lifecycle-test'], {
-  encoding: 'utf8', timeout: 20000
-});
+const directory = mkdtempSync('/tmp/tandem-lifecycle-');
+let result;
+try {
+  result = spawnSync(resolve('dist/Tandem.app/Contents/MacOS/Tandem'), ['--lifecycle-test'], {
+    encoding: 'utf8', timeout: 20000, env: { ...process.env, TANDEM_TEST_DATA_DIR: directory }
+  });
+} finally { rmSync(directory, { recursive: true, force: true }); }
 process.stdout.write(result.stdout ?? '');
 process.stderr.write(result.stderr ?? '');
 if (result.error) throw result.error;

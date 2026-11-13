@@ -22,8 +22,8 @@ writeFileSync(`${contents}/Info.plist`, `<?xml version="1.0" encoding="UTF-8"?>
 <key>CFBundleIdentifier</key><string>dev.tandem.personal-agent</string>
 <key>CFBundleName</key><string>Tandem</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.0.1</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>0.1.0</string>
+<key>CFBundleVersion</key><string>2</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>\n`);

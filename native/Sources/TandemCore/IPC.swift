@@ -1,10 +1,10 @@
 import Foundation
 import Darwin
 
-public enum IPCError: Error { case system(Int32), frame, peer, response }
+public enum IPCError: Error { case system(Int32), frame, peer, response, remote(String) }
 
 public enum Frame {
-    public static let maximum = 65_536
+    public static let maximum = 4_194_304
     public static func encode(_ object: [String: Any]) throws -> Data {
         let body = try JSONSerialization.data(withJSONObject: object)
         guard !body.isEmpty, body.count <= maximum else { throw IPCError.frame }
@@ -18,6 +18,7 @@ public enum Frame {
 // Used only by the supervisor's sequential I/O tasks.
 final class IPCConnection: @unchecked Sendable {
     private var fd: Int32 = -1
+    private let lock = NSLock()
 
     init(path: String, expectedPID: Int32) throws {
         fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
@@ -70,6 +71,8 @@ final class IPCConnection: @unchecked Sendable {
     }
 
     func request(_ method: String, payload: [String: Any] = [:]) throws -> [String: Any] {
+        lock.lock()
+        defer { lock.unlock() }
         let id = UUID().uuidString
         let frame = try Frame.encode([
             "protocolVersion": 1, "requestId": id, "method": method,
@@ -89,8 +92,12 @@ final class IPCConnection: @unchecked Sendable {
         guard length > 0, length <= Frame.maximum else { throw IPCError.frame }
         guard let response = try JSONSerialization.jsonObject(with: readExactly(length)) as? [String: Any],
               response["protocolVersion"] as? Int == 1,
-              response["requestId"] as? String == id,
-              response["ok"] as? Bool == true,
+              response["requestId"] as? String == id else { throw IPCError.response }
+        if response["ok"] as? Bool == false {
+            let error = response["error"] as? [String: Any]
+            throw IPCError.remote(error?["code"] as? String ?? "REQUEST_FAILED")
+        }
+        guard response["ok"] as? Bool == true,
               let data = response["data"] as? [String: Any] else { throw IPCError.response }
         return data
     }

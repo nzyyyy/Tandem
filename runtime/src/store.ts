@@ -1,0 +1,104 @@
+import { DatabaseSync } from 'node:sqlite';
+import { chmodSync, existsSync, lstatSync } from 'node:fs';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { privateDirectory } from './config.ts';
+import { requireValue } from './errors.ts';
+
+export class Store {
+  readonly db: DatabaseSync;
+  constructor(directory: string) {
+    privateDirectory(directory);
+    const path = join(directory, 'tandem.sqlite');
+    if (existsSync(path)) requireValue(lstatSync(path).isFile() && !lstatSync(path).isSymbolicLink(), 'DATABASE_FILE');
+    this.db = new DatabaseSync(path);
+    chmodSync(path, 0o600);
+    this.db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;');
+    const version = this.db.prepare('PRAGMA user_version').get()!.user_version;
+    requireValue(version === 0 || version === 1, 'DATABASE_VERSION');
+    if (version === 0) this.transaction(() => {
+      this.db.exec(`
+        CREATE TABLE timelines(id TEXT PRIMARY KEY CHECK(id='main'), next_sequence INTEGER NOT NULL);
+        INSERT INTO timelines VALUES('main', 1);
+        CREATE TABLE sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, temporary INTEGER NOT NULL CHECK(temporary IN(0,1)), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+        CREATE TABLE focus_states(surface_id TEXT PRIMARY KEY, active_session_id TEXT REFERENCES sessions(id), interrupted_session_id TEXT REFERENCES sessions(id), version INTEGER NOT NULL DEFAULT 1);
+        CREATE TABLE messages(id TEXT PRIMARY KEY, timeline_id TEXT NOT NULL DEFAULT 'main' REFERENCES timelines(id), session_id TEXT NOT NULL REFERENCES sessions(id), sequence INTEGER NOT NULL UNIQUE, role TEXT NOT NULL CHECK(role IN('user','assistant')), content TEXT NOT NULL, run_id TEXT REFERENCES runs(id), created_at INTEGER NOT NULL);
+        CREATE TABLE runs(id TEXT PRIMARY KEY, user_message_id TEXT NOT NULL REFERENCES messages(id), assistant_message_id TEXT REFERENCES messages(id), session_id TEXT NOT NULL REFERENCES sessions(id), binding_json TEXT NOT NULL, context_json TEXT, status TEXT NOT NULL CHECK(status IN('queued','running','completed','failed','interrupted','cancelled')), error_code TEXT, attempt INTEGER NOT NULL, retry_of TEXT UNIQUE REFERENCES runs(id), request_key TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL, created_at INTEGER NOT NULL);
+        CREATE INDEX messages_session_sequence ON messages(session_id, sequence);
+        CREATE INDEX runs_queue ON runs(status, created_at);
+        CREATE TABLE events(sequence INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,schema_version INTEGER NOT NULL,type TEXT NOT NULL,aggregate_id TEXT NOT NULL,correlation_id TEXT NOT NULL,causation_id TEXT,occurred_at INTEGER NOT NULL,payload_ref TEXT NOT NULL);
+        CREATE INDEX events_aggregate_sequence ON events(aggregate_id,sequence);
+        PRAGMA user_version=1;
+      `);
+    });
+    // Reopening the app never restarts interrupted model work automatically.
+    this.transaction(() => {
+      const pending = this.db.prepare("SELECT assistant_message_id FROM runs WHERE status IN('queued','running')").all();
+      this.db.prepare("UPDATE runs SET status='interrupted', error_code='INTERRUPTED' WHERE status IN('queued','running')").run();
+      for (const run of pending) this.changed(String(run.assistant_message_id));
+    });
+  }
+
+  transaction<T>(body: () => T): T {
+    this.db.exec('BEGIN IMMEDIATE');
+    try { const result = body(); this.db.exec('COMMIT'); return result; }
+    catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+
+  sequence(): number {
+    return Number(this.db.prepare("UPDATE timelines SET next_sequence=next_sequence+1 WHERE id='main' RETURNING next_sequence-1 AS value").get()!.value);
+  }
+
+  focus(surfaceId: string) {
+    this.db.prepare(`INSERT OR IGNORE INTO focus_states(surface_id,active_session_id) VALUES(?,
+      (SELECT id FROM sessions WHERE temporary=0 ORDER BY updated_at DESC, rowid DESC LIMIT 1))`).run(surfaceId);
+    return this.db.prepare('SELECT active_session_id AS activeSessionId, interrupted_session_id AS interruptedSessionId, version FROM focus_states WHERE surface_id=?').get(surfaceId)!;
+  }
+
+  newSession(title: string, temporary: boolean): string {
+    const id = randomUUID();
+    this.db.prepare('INSERT INTO sessions VALUES(?,?,?,?,?)').run(id, title.slice(0, 60), Number(temporary), Date.now(), Date.now());
+    return id;
+  }
+
+  timeline(before?: number) {
+    return this.messageRows('m.sequence<? ORDER BY m.sequence DESC LIMIT 10', before ?? Number.MAX_SAFE_INTEGER).reverse();
+  }
+
+  private messageRows(where: string, ...args: (string | number)[]) {
+    const rows = this.db.prepare(`SELECT m.id,m.session_id AS sessionId,m.sequence,m.role,m.content,m.created_at AS createdAt,
+      r.id AS runId,r.status,r.error_code AS errorCode,r.binding_json AS bindingJson,r.attempt
+      FROM messages m LEFT JOIN runs r ON r.id=m.run_id
+      WHERE ${where}`).all(...args);
+    return rows.map(row => {
+      const binding = row.bindingJson ? JSON.parse(String(row.bindingJson)) : null;
+      const { bindingJson, ...message } = row;
+      return { ...message, modelName: binding?.modelName ?? null, connectionId: binding?.id ?? null };
+    });
+  }
+
+  changed(messageId: string) {
+    const row = this.db.prepare('SELECT run_id FROM messages WHERE id=?').get(messageId);
+    this.db.prepare("INSERT INTO events(id,schema_version,type,aggregate_id,correlation_id,causation_id,occurred_at,payload_ref) VALUES(?,1,'message.changed',?,?,?,?,?)")
+      .run(randomUUID(), messageId, row?.run_id ?? messageId, null, Date.now(), messageId);
+  }
+
+  changes(after?: number) {
+    const latest = Number(this.db.prepare('SELECT COALESCE(MAX(sequence),0) AS n FROM events').get()!.n);
+    if (after === undefined) return { cursor: latest, messages: [] };
+    requireValue(Number.isSafeInteger(after) && after >= 0 && after <= latest, 'GAP_REQUIRED');
+    if (after === latest) return { cursor: latest, messages: [] };
+    // Coalesce text deltas per message so a token stream cannot delay other views' updates.
+    const boundary = this.db.prepare('SELECT MAX(sequence) AS sequence FROM events GROUP BY aggregate_id HAVING MAX(sequence)>? ORDER BY sequence LIMIT 5').all(after);
+    const cursor = boundary.length ? Number(boundary.at(-1)!.sequence) : latest;
+    return { cursor, messages: this.messageRows('m.id IN (SELECT aggregate_id FROM events GROUP BY aggregate_id HAVING MAX(sequence)>? AND MAX(sequence)<=?) ORDER BY m.sequence', after, cursor) };
+  }
+
+  runStatus(id: string, status: string, code: string | null = null) {
+    this.transaction(() => {
+      this.db.prepare('UPDATE runs SET status=?,error_code=? WHERE id=?').run(status, code, id);
+      const run = this.db.prepare('SELECT assistant_message_id FROM runs WHERE id=?').get(id);
+      if (run) this.changed(String(run.assistant_message_id));
+    });
+  }
+}

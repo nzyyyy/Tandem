@@ -11,7 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let resources = Bundle.main.resourceURL!
         let node = resources.appendingPathComponent("node")
         let entry = resources.appendingPathComponent("runtime/main.js")
-        runtime.start(node: node, entry: entry)
+        let testDirectory = CommandLine.arguments.contains("--lifecycle-test")
+            ? ProcessInfo.processInfo.environment["TANDEM_TEST_DATA_DIR"].map { URL(fileURLWithPath: $0) } : nil
+        runtime.start(node: node, entry: entry, dataDirectory: testDirectory)
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         if CommandLine.arguments.contains("--lifecycle-test") {
@@ -74,7 +76,7 @@ struct DiagnosticsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Tandem").font(.largeTitle.bold())
-            Text("M0 · 本地运行环境验证").foregroundStyle(.secondary)
+            Text("本地运行环境").foregroundStyle(.secondary)
             Divider()
             Label(runtime.status, systemImage: "network")
             LabeledContent("Node PID", value: String(runtime.nodePID))
@@ -103,15 +105,16 @@ struct DiagnosticsView: View {
 struct TandemApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
-        Window("Tandem", id: "main") { DiagnosticsView(runtime: delegate.runtime) }
+        WindowGroup("Tandem", id: "main") { AssistantView(runtime: delegate.runtime) }
     }
 }
 
 @MainActor
 func smokeTest() async {
     let arguments = CommandLine.arguments
-    guard arguments.count == 4 else { exit(2) }
+    guard arguments.count == 5 else { exit(2) }
     let runtime = RuntimeSupervisor()
+    let dataDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("tandem-smoke-\(UUID().uuidString)")
     func waitFor(_ condition: () -> Bool) async throws {
         for _ in 0..<200 {
             if condition() { return }
@@ -120,23 +123,56 @@ func smokeTest() async {
         throw NSError(domain: "SmokeTimeout", code: 1)
     }
     do {
-        runtime.start(node: URL(fileURLWithPath: arguments[2]), entry: URL(fileURLWithPath: arguments[3]))
+        runtime.start(node: URL(fileURLWithPath: arguments[2]), entry: URL(fileURLWithPath: arguments[3]), dataDirectory: dataDirectory)
         try await waitFor { runtime.pongCount >= 1 }
+        let document = try await runtime.request("config.get")
+        guard document["revision"] as? String == "missing" else { throw IPCError.response }
+        let configuration: [String: Any] = ["schemaVersion": 1, "modelConnections": [
+            ["id": "smoke", "protocol": "openai", "apiType": "responses", "url": arguments[4], "key": "smoke-private-key", "modelNames": ["smoke-model", "another-model"]],
+            ["id": "chat", "protocol": "openai", "apiType": "chat_completions", "url": arguments[4], "key": "smoke-private-key", "modelNames": ["smoke-model"]],
+            ["id": "anthropic", "protocol": "anthropic", "apiType": "messages", "url": arguments[4], "key": "smoke-private-key", "modelNames": ["smoke-model"]]
+        ], "defaultModel": ["connectionId": "smoke", "modelName": "smoke-model"]]
+        _ = try await runtime.request("config.save", payload: ["config": configuration, "expectedRevision": "missing"])
+        let state = try await runtime.request("state.get", payload: ["surfaceId": "smoke"])
+        let snapshot = try JSONDecoder().decode(AssistantSnapshot.self, from: JSONSerialization.data(withJSONObject: state))
+        guard snapshot.defaultModel?.modelName == "smoke-model" else { throw IPCError.response }
+        let assistant = AssistantModel(runtime: runtime)
+        let polling = Task { await assistant.poll(surfaceId: "smoke") }
+        try await waitFor { assistant.snapshot != nil }
+        for (index, connectionId) in ["smoke", "chat", "anthropic"].enumerated() {
+            assistant.selectedModel = index == 0 ? "" : ModelSelection(connectionId: connectionId, modelName: "smoke-model").identifier
+            assistant.draft = "你好 \(index)"
+            await assistant.send()
+            try await waitFor { assistant.messages.filter { $0.status == "completed" }.count == index + 1 }
+            guard assistant.error == nil, assistant.messages.last?.content == "你好，M1" else { throw IPCError.response }
+        }
         let firstPID = runtime.nodePID
         let connections = runtime.connectionCount
         runtime.reconnect()
         try await waitFor { runtime.connectionCount > connections && runtime.pongCount >= 2 }
         guard runtime.nodePID == firstPID else { throw IPCError.peer }
+        assistant.draft = "crash-request"
+        await assistant.send()
+        try await waitFor { assistant.messages.last?.status == "running" && assistant.messages.last?.content == "partial" }
         runtime.injectCrash()
         try await waitFor { runtime.nodePID != 0 && runtime.nodePID != firstPID && runtime.connectionCount >= connections + 2 }
         let lastPID = runtime.nodePID
+        let restored = try await runtime.request("config.get")
+        guard (restored["config"] as? [String: Any])?["defaultModel"] != nil else { throw IPCError.response }
+        let restoredState = try await runtime.request("state.get", payload: ["surfaceId": "smoke"])
+        let recovered = try JSONDecoder().decode(AssistantSnapshot.self, from: JSONSerialization.data(withJSONObject: restoredState))
+        guard recovered.messages.count == 8, recovered.messages.last?.status == "interrupted",
+              recovered.messages.last?.content == "partial" else { throw IPCError.response }
+        polling.cancel()
         await runtime.stop()
         try await Task.sleep(for: .seconds(2))
         guard runtime.nodePID == 0, kill(lastPID, 0) == -1, errno == ESRCH else { throw IPCError.peer }
-        print("PASS Swift → Node: authenticated Ping/Pong, reconnect, crash restart, quit cleanup")
+        try? FileManager.default.removeItem(at: dataDirectory)
+        print("PASS Swift → Node: three-API AssistantModel chat, config/history persistence, reconnect, crash restart, quit cleanup")
         exit(0)
     } catch {
         await runtime.stop()
+        try? FileManager.default.removeItem(at: dataDirectory)
         fputs("FAIL supervisor smoke test\n", stderr)
         exit(1)
     }
