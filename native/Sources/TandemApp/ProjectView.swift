@@ -123,6 +123,7 @@ struct ProjectView: View {
         VStack(alignment: .leading, spacing: 16) {
             Label("永久删除「\(preview.title)」", systemImage: "exclamationmark.triangle").font(.headline)
             Text("将删除 \(preview.interactions.count) 次交互、\(preview.messages.count) 条消息及 \(preview.runs.count) 次执行；\(preview.sharedSnapshots.count) 份快照含相关引用，将清理对应片段和 \(preview.derivedMessages.count) 条派生回答内容。共享会话中的其他交互保留，外部文件不受影响。")
+            Text("将影响 \(Set(preview.tasks.map(\.id)).count) 个任务：清理本项目任务及历史交付，移除共享产物引用与完成依据。")
             Text("此操作无法撤销。归属已纠正但实际使用过本项目上下文的交互也在清理范围内。仅清理当前数据库；迁移保护副本及云端留存不随此操作删除，SQLite WAL 不承诺物理擦除。")
                 .foregroundStyle(TandemStyle.secondary)
             HStack {

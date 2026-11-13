@@ -53,14 +53,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             fputs("[lifecycle] window_ready\n", stderr)
             let pid = runtime.nodePID
             let count = runtime.pongCount
+            _ = try await runtime.request("message.send", payload: ["surfaceId": "lifecycle", "text": "lifecycle-background", "newTopic": true,
+                "idempotencyKey": "lifecycle-background", "task": ["deliverable": "后台报告", "criteria": ["关窗后生成报告"]]])
             window.performClose(nil)
             fputs("[lifecycle] window_closed\n", stderr)
             try await Task.sleep(for: .seconds(2))
             guard !window.isVisible, runtime.nodePID == pid, runtime.pongCount > count else { throw IPCError.response }
+            let activity = try await runtime.request("activity.get", payload: ["surfaceId": "lifecycle"])
+            guard let tasks = activity["tasks"] as? [[String: Any]], tasks.first?["status"] as? String == "completed",
+                  tasks.first?["result_ref"] as? String != nil else { throw IPCError.response }
             _ = applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
             fputs("[lifecycle] window_reopened\n", stderr)
             guard window.isVisible else { throw IPCError.response }
-            print("PASS App lifecycle: close last window, continue Ping/Pong, reopen, terminate")
+            _ = try await runtime.request("message.send", payload: ["surfaceId": "lifecycle", "text": "lifecycle-hold", "newTopic": true, "idempotencyKey": "lifecycle-hold"])
+            try await Task.sleep(for: .milliseconds(150))
+            print("PASS App lifecycle: close last window, complete background Task, reopen, interrupt in-flight request on quit")
             // Enter termination from the AppKit run loop, outside a task/main-queue job.
             Timer.scheduledTimer(withTimeInterval: 0.05, repeats: false) { _ in NSApp.terminate(nil) }
         } catch {
@@ -204,12 +211,27 @@ func smokeTest() async {
         guard assistant.messages.last?.executionProjectId == targetId else { throw IPCError.response }
         let unchanged = try await assistant.context(snapshotId)
         guard unchanged.projectId == projectId, unchanged.fragments.first?.content == "M2 scoped question" else { throw IPCError.response }
+        let resources = dataDirectory.appendingPathComponent("resources")
+        try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+        let source = resources.appendingPathComponent("notes.md")
+        try "原生读取资料\n第二行".write(to: source, atomically: true, encoding: .utf8)
+        let grantId = try runtime.directories.authorize(resources, projectId: targetId)
+        _ = try await runtime.request("directory.register", payload: runtime.directories.registrations().first { $0["id"] as? String == grantId }!)
+        assistant.selectedModel = ModelSelection(connectionId: "chat", modelName: "smoke-model").identifier
+        assistant.newTopic = true
+        assistant.createTask = true; assistant.taskDeliverable = "M3 原生读取报告"; assistant.taskCriteria = "引用原生文件与版本"
+        assistant.draft = "M3 native read"
+        await assistant.send()
+        try await waitFor { assistant.snapshot?.activity.tasks.contains { $0.status == "completed" } == true }
+        guard let task = assistant.snapshot?.activity.tasks.first, let resultId = task.result_ref,
+              try await assistant.result(resultId).contains("原生读取资料"),
+              try String(contentsOf: source, encoding: .utf8) == "原生读取资料\n第二行" else { throw IPCError.response }
         polling.cancel()
         await runtime.stop()
         try await Task.sleep(for: .seconds(2))
         guard runtime.nodePID == 0, kill(lastPID, 0) == -1, errno == ESRCH else { throw IPCError.peer }
         try? FileManager.default.removeItem(at: dataDirectory)
-        print("PASS Swift → Node: three-API chat, M2 pending route, isolated snapshot, correction/reprocess, persistence, reconnect, crash restart, quit cleanup")
+        print("PASS Swift → Node: three-API chat, M2 pending route, isolated snapshot, correction/reprocess, M3 native read and Task artifact, persistence, reconnect, crash restart, quit cleanup")
         exit(0)
     } catch {
         await runtime.stop()

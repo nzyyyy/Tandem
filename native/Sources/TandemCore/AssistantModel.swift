@@ -94,6 +94,7 @@ public struct TimelineMessage: Codable, Equatable, Identifiable {
     public var snapshotId: String?
 }
 public struct AssistantSnapshot: Codable, Equatable {
+    public var activity: ActivityState
     public var projects: [TandemProject]
     public var pendingInteractions: [PendingInteraction]
     public var focus: FocusState
@@ -156,6 +157,7 @@ public struct ProjectDeletion: Codable {
     public var interactions: [DeletionItem]
     public var messages: [DeletionItem]
     public var runs: [DeletionItem]
+    public var tasks: [DeletionItem]
     public var sharedSnapshots: [String]
     public var derivedMessages: [String]
 }
@@ -193,7 +195,13 @@ public func userFacingError(_ code: String) -> String {
         "MODEL_EMPTY_RESPONSE": "模型未返回文本。",
         "MODEL_OUTPUT_LIMIT": "回答超过当前长度限制，已有输出已保留。",
         "MODEL_REFUSED": "模型拒绝了此请求。",
-        "TOOLS_UNAVAILABLE": "模型请求了工具；本阶段尚不支持工具执行，未执行任何操作。",
+        "TOOL_UNAVAILABLE": "模型请求的工具不在首版只读工具范围内。",
+        "BUDGET_EXHAUSTED": "执行预算已用尽。请在 Activity 查看消耗并追加预算后继续。",
+        "BUDGET_REQUIRED": "请明确追加预算后再继续。",
+        "APPROVAL_EXPIRED": "审批已过期，请取消后重新处理以获取新审批。",
+        "DIRECTORY_CHANGED": "所选目录与原授权不是同一资源，请选择原目录；目录已替换时请重新处理任务。",
+        "DIRECTORY_UNAUTHORIZED": "目录授权已失效或撤销，请在 Activity 重新选择同一目录后继续。",
+        "TASK_CONFLICT": "任务已有新修订，请重新加载。",
         "INTERRUPTED": "上次执行被应用退出或 Runtime 中断。可手动重试。",
         "CANCELLED": "已停止生成。",
         "CONFIG_CONFLICT": "配置文件已被修改。请重新加载后再保存。",
@@ -217,6 +225,9 @@ public func userFacingError(_ code: String) -> String {
 @MainActor
 public final class AssistantModel: ObservableObject {
     @Published public var draft = ""
+    @Published public var createTask = false
+    @Published public var taskDeliverable = ""
+    @Published public var taskCriteria = ""
     @Published public var selectedModel = ""
     @Published public var newTopic = false
     @Published public var temporary = false
@@ -226,6 +237,7 @@ public final class AssistantModel: ObservableObject {
     @Published public private(set) var sending = false
     @Published public private(set) var hasMore = false
     private var surfaceId = ""
+    public var currentSurfaceId: String { surfaceId }
     private var cursor: Int?
     private var pendingSignature: String?
     private var pendingKey: String?
@@ -302,14 +314,16 @@ public final class AssistantModel: ObservableObject {
         sending = true
         defer { sending = false }
         let submitted = draft
-        let signature = "\(submitted)\u{0}\(selectedModel)\u{0}\(newTopic)\u{0}\(temporary)"
+        let signature = "\(submitted)\u{0}\(selectedModel)\u{0}\(newTopic)\u{0}\(temporary)\u{0}\(createTask)\u{0}\(taskDeliverable)\u{0}\(taskCriteria)"
         if pendingSignature != signature { pendingSignature = signature; pendingKey = UUID().uuidString }
         do {
-            _ = try await runtime.request("message.send", payload: ["surfaceId": surfaceId, "text": submitted,
-                "selection": selectionPayload(), "newTopic": newTopic, "temporary": temporary, "idempotencyKey": pendingKey!])
+            var payload: [String: Any] = ["surfaceId": surfaceId, "text": submitted,
+                "selection": selectionPayload(), "newTopic": newTopic, "temporary": temporary, "idempotencyKey": pendingKey!]
+            if createTask { payload["task"] = ["deliverable": taskDeliverable, "criteria": taskCriteria.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }] }
+            _ = try await runtime.request("message.send", payload: payload)
             if draft == submitted { draft = "" }
             pendingKey = nil; pendingSignature = nil
-            newTopic = false; temporary = false; error = nil
+            newTopic = false; temporary = false; createTask = false; taskDeliverable = ""; taskCriteria = ""; error = nil
             await refresh()
         } catch { show(error) }
     }
@@ -366,6 +380,41 @@ public final class AssistantModel: ObservableObject {
 
     public func context(_ id: String) async throws -> RunContext {
         try await call("snapshot.get", payload: ["id": id, "surfaceId": surfaceId], as: RunContext.self)
+    }
+
+    public func approve(_ approval: ApprovalCard, allow: Bool) async {
+        do {
+            var payload: [String: Any] = ["id": approval.id, "approve": allow]
+            if allow {
+                let project = snapshot?.activity.runs.first { $0.id == approval.run_id }?.project_id
+                guard let grant = try await runtime.chooseDirectory(projectId: project) else { return }
+                payload["grantId"] = grant
+            }
+            _ = await perform("approval.decide", payload)
+        } catch { show(error) }
+    }
+    public func authorizeDirectory(_ grant: DirectoryGrant? = nil) async {
+        do { _ = try await runtime.chooseDirectory(projectId: grant == nil ? snapshot?.focus.activeProjectId : grant?.project_id, renewing: grant?.id); await refresh() }
+        catch { show(error) }
+    }
+    public func revokeDirectory(_ id: String) async {
+        runtime.directories.revoke(id)
+        _ = await perform("directory.revoke", ["id": id])
+    }
+    public func continueRun(_ run: ActivityRun, addBudget: Bool) async {
+        _ = await perform("run.continue", ["runId": run.id, "expectedVersion": run.version,
+            "idempotencyKey": "continue-\(run.id)-\(run.version)", "steps": addBudget ? 24 : 0,
+            "tokens": addBudget ? 64000 : 0, "activeMs": addBudget ? 300000 : 0])
+    }
+    public func reviseTask(_ task: PersistentTask, request: String, deliverable: String, criteria: String, key: String) async -> Bool {
+        await perform("message.send", ["surfaceId": surfaceId, "text": request, "sessionId": task.session_id,
+            "selection": selectionPayload(), "idempotencyKey": key,
+            "task": ["id": task.id, "expectedRevision": task.revision, "deliverable": deliverable,
+                     "criteria": criteria.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }]])
+    }
+    public func result(_ messageId: String) async throws -> String {
+        struct Result: Decodable { var content: String }
+        return try await call("result.get", payload: ["surfaceId": surfaceId, "messageId": messageId], as: Result.self).content
     }
 
     public func connectionTitle(_ id: String?) -> String {

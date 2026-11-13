@@ -11,6 +11,23 @@ const server = createServer(async (request, response) => {
   const body = JSON.parse(Buffer.concat(chunks).toString());
   assert.equal(body.model, 'smoke-model');
   paths.push(request.url);
+  const messages = body.messages ?? body.input;
+  if (JSON.stringify(messages).includes('M3 native read')) {
+    response.setHeader('content-type','application/json');
+    const result = messages.find(m=>m.role==='tool');
+    const policy = messages.find(m=>typeof m.content==='string' && m.content.includes('"grants":'));
+    const grant = policy && JSON.parse(policy.content.slice(policy.content.indexOf('{'))).grants[0].id;
+    if (!result) {
+      assert.ok(grant);
+      response.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{content:'',tool_calls:[{id:'native-read',type:'function',function:{name:'read_file',arguments:JSON.stringify({grantId:grant,path:'notes.md',startLine:1,endLine:2})}}]}}]}));
+    } else {
+      const file = JSON.parse(result.content);
+      assert.equal(file.content,'原生读取资料\n第二行');
+      assert.equal(file.version.length,64);
+      response.end(JSON.stringify({choices:[{finish_reason:'tool_calls',message:{content:'',tool_calls:[{id:'finish-report',type:'function',function:{name:'complete_task',arguments:JSON.stringify({markdown:`# M3 报告\n${file.content}\nnotes.md:1-2 @${file.version}`,evidence:['原生读取完成，报告引用行号及内容哈希']})}}]}}]}));
+    }
+    return;
+  }
   response.setHeader('content-type', 'text/event-stream');
   if ((body.messages ?? body.input).at(-1).content === 'crash-request') {
     response.write('data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n');
@@ -40,5 +57,5 @@ try {
   timer = setTimeout(() => child.kill('SIGKILL'), 45000);
   const [code] = await once(child, 'exit');
   assert.equal(code, 0);
-  assert.deepEqual(paths, ['/v1/responses', '/v1/chat/completions', '/v1/messages', '/v1/messages', '/v1/messages', '/v1/messages']);
+  assert.deepEqual(paths, ['/v1/responses', '/v1/chat/completions', '/v1/messages', '/v1/messages', '/v1/messages', '/v1/messages', '/v1/chat/completions', '/v1/chat/completions']);
 } finally { clearTimeout(timer); server.closeAllConnections(); server.close(); }

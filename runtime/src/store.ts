@@ -3,6 +3,7 @@ import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, openSync, renam
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { privateDirectory } from './config.ts';
+import { migrateM3 } from './execution.ts';
 import { requireValue } from './errors.ts';
 
 export class Store {
@@ -15,7 +16,7 @@ export class Store {
     chmodSync(path, 0o600);
     this.db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;');
     const version = this.db.prepare('PRAGMA user_version').get()!.user_version;
-    requireValue(version === 0 || version === 1 || version === 2, 'DATABASE_VERSION');
+    requireValue(version === 0 || version === 1 || version === 2 || version === 3, 'DATABASE_VERSION');
     if (version === 0) this.transaction(() => {
       this.db.exec(`
         CREATE TABLE timelines(id TEXT PRIMARY KEY CHECK(id='main'), next_sequence INTEGER NOT NULL);
@@ -51,7 +52,7 @@ export class Store {
           renameSync(temporary,backupPath);
         } finally { if(existsSync(temporary)) unlinkSync(temporary); }
       }
-      if (version !== 2) this.transaction(() => {
+      if (Number(version) < 2) this.transaction(() => {
         this.db.exec(`
           CREATE TABLE projects(id TEXT PRIMARY KEY,title TEXT NOT NULL,description TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN('open','archived')),version INTEGER NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
           ALTER TABLE sessions ADD COLUMN project_id TEXT REFERENCES projects(id);
@@ -90,6 +91,7 @@ export class Store {
         }
       });
     } catch (error) { this.db.close(); throw error; }
+    try { migrateM3(this, directory); } catch (error) { this.db.close(); throw error; }
     this.db.exec("UPDATE outbox SET status='interrupted' WHERE status='pending';");
     // Reopening the app never restarts interrupted model work automatically.
     this.transaction(() => {

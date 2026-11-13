@@ -107,7 +107,10 @@ export class ContextService {
       const focus = this.store.focus(text(p.surfaceId));
       requireValue(this.allowed(s.project_id, focus, true), 'CONTEXT_SCOPE');
       const fragments = JSON.parse(String(s.fragments_json));
-      for (const f of fragments) requireValue(f.deleted || this.allowed(f.projectId, focus, true), 'CONTEXT_SCOPE');
+      for (const f of fragments) {
+        requireValue(f.deleted || this.allowed(f.projectId, focus, true), 'CONTEXT_SCOPE');
+        if (f.grantId && !f.deleted) requireValue(this.db.prepare("SELECT 1 FROM directory_grants WHERE id=? AND status='active' AND project_id IS ?").get(f.grantId,f.projectId),'DIRECTORY_UNAUTHORIZED');
+      }
       return { id: s.id, mode: s.mode, projectId: s.project_id, fragments };
     }
     if (method === 'project.deletePreview') {
@@ -179,9 +182,22 @@ export class ContextService {
     const key = text(p.idempotencyKey);
     const input = { surfaceId: text(p.surfaceId), text: text(p.text,8000), newTopic: p.newTopic === true, temporary: p.temporary === true,
       selection: p.selection == null ? null : {connectionId:text(record(p.selection).connectionId),modelName:text(record(p.selection).modelName,256)}, sessionId: p.sessionId == null ? null : text(p.sessionId) };
+    if (p.task != null) {
+      const task = record(p.task);
+      requireValue(Array.isArray(task.criteria) && task.criteria.length>0 && task.criteria.length<=12);
+      Object.assign(input,{ task: {deliverable:redact(text(task.deliverable,2000),this.config()),criteria:task.criteria.map((c:unknown)=>redact(text(c,1000),this.config())),
+        ...(task.id ? {id:text(task.id),expectedRevision:task.expectedRevision} : {})} });
+    }
     const fingerprint = hash(input);
     const old = this.db.prepare('SELECT * FROM interactions WHERE request_key=?').get(key);
     if (old) { requireValue(old.request_hash === fingerprint, 'IDEMPOTENCY_CONFLICT'); return this.result(old); }
+    if (p.task?.id) {
+      const task = this.db.prepare('SELECT * FROM tasks WHERE id=?').get(p.task.id);
+      requireValue(task && task.revision===p.task.expectedRevision,'TASK_CONFLICT');
+      const focus = this.store.focus(input.surfaceId);
+      requireValue(this.allowed(task.project_id,focus),'CONTEXT_SCOPE');
+      requireValue(input.sessionId===task.session_id,'TASK_CONFLICT');
+    }
     const config = this.config();
     const model = bindModel(config,input.selection);
     const binding: BoundModel = { id:model.id,protocol:model.protocol,apiType:model.apiType,url:model.url,modelName:model.modelName };
@@ -259,7 +275,7 @@ export class ContextService {
       const eventId=randomUUID();
       this.db.prepare('INSERT INTO corrections VALUES(?,?,?,?,?,?)').run(eventId,id,i.project_id,target?.id ?? null,version,Date.now());
       this.db.prepare("INSERT INTO events(id,schema_version,type,aggregate_id,correlation_id,causation_id,occurred_at,payload_ref) VALUES(?,1,'interaction.corrected',?,?,?, ?,?)").run(eventId,id,id,null,Date.now(),eventId);
-      for(const run of this.db.prepare("SELECT id FROM runs WHERE interaction_id=? AND status IN('queued','running')").all(id)) this.cancel(String(run.id));
+      for(const run of this.db.prepare("SELECT id FROM runs WHERE interaction_id=? AND status IN('queued','running','paused','waiting_approval','interrupted')").all(id)) this.cancel(String(run.id));
       this.db.prepare("UPDATE outbox SET status='interrupted' WHERE interaction_id=?").run(id);
       for(const m of this.db.prepare('SELECT id FROM messages WHERE interaction_id=? OR run_id IN(SELECT id FROM runs WHERE interaction_id=?)').all(id,id)) this.store.changed(String(m.id));
       return {version};
@@ -282,7 +298,7 @@ export class ContextService {
     this.project(run.project_id, false);
     requireValue(run.context_mode==='automatic' || run.project_id,'PROJECT_REQUIRED');
     const cutoff=this.db.prepare('SELECT sequence FROM messages WHERE id=?').get(run.user_message_id)!.sequence;
-    const rows=this.db.prepare(`SELECT m.id,m.role,m.content,m.interaction_id,r.project_id AS execution_project,r.snapshot_id,i.project_id,i.version FROM messages m
+    const rows=this.db.prepare(`SELECT m.id,m.role,m.content,m.interaction_id,r.project_id AS execution_project,r.id AS source_run_id,r.snapshot_id,i.project_id,i.version FROM messages m
       LEFT JOIN runs r ON r.id=m.run_id LEFT JOIN messages origin ON origin.id=r.user_message_id
       JOIN interactions i ON i.id=COALESCE(m.interaction_id,r.interaction_id)
       WHERE m.session_id=? AND i.project_id IS ? AND ((m.role='user' AND m.sequence<=?) OR
@@ -291,8 +307,8 @@ export class ContextService {
       ORDER BY COALESCE(origin.sequence,m.sequence),CASE m.role WHEN 'user' THEN 0 ELSE 1 END`).all(run.session_id,run.project_id,cutoff,run.project_id,cutoff);
     const safe=rows.filter(row => {
       if(row.role!=='assistant' || !row.snapshot_id) return row.role==='user';
-      const s=this.db.prepare('SELECT fragments_json FROM context_snapshots WHERE id=?').get(row.snapshot_id);
-      return s && JSON.parse(String(s.fragments_json)).every((f: Row)=>!f.deleted && f.projectId===run.project_id);
+      const snapshots=this.db.prepare('SELECT fragments_json FROM context_snapshots WHERE run_id=?').all(row.source_run_id);
+      return snapshots.length>0 && snapshots.every(s=>JSON.parse(String(s.fragments_json)).every((f:Row)=>!f.deleted && f.projectId===run.project_id && (!f.grantId || this.db.prepare("SELECT 1 FROM directory_grants WHERE id=? AND status='active' AND project_id IS ?").get(f.grantId,run.project_id))));
     });
     let selected=safe.slice(-40); while(selected[0]?.role==='assistant') selected.shift();
     let size=0;
@@ -338,7 +354,8 @@ export class ContextService {
         }
       }
     }
-    return {projectId:id,title:project.title,version:project.version,interactions,runs,messages,sharedSnapshots:[...shared].sort(),derivedMessages:[...derived].sort(),externalFilesDeleted:false};
+    const tasks=this.db.prepare('SELECT t.id,t.revision,t.project_id,v.result_ref FROM tasks t JOIN task_revisions v ON v.task_id=t.id ORDER BY t.id,v.revision').all().filter(t=>t.project_id===id || sources.has(t.result_ref)).map(t=>({id:t.id,revision:t.revision,action:t.project_id===id?'delete':'clear_result'}));
+    return {tasks,projectId:id,title:project.title,version:project.version,interactions,runs,messages,sharedSnapshots:[...shared].sort(),derivedMessages:[...derived].sort(),externalFilesDeleted:false};
   }
 
   private deleteProject(p: Row) {
@@ -351,7 +368,7 @@ export class ContextService {
       this.db.exec('PRAGMA defer_foreign_keys=ON');
       for(const r of details.runs) this.cancel(String(r.id));
       for(const messageId of details.derivedMessages) {
-        const run=this.db.prepare("SELECT r.id FROM runs r JOIN messages m ON m.run_id=r.id WHERE m.id=? AND r.status IN('queued','running')").get(messageId);
+        const run=this.db.prepare("SELECT r.id FROM runs r JOIN messages m ON m.run_id=r.id WHERE m.id=? AND r.status IN('queued','running','paused','waiting_approval','interrupted')").get(messageId);
         if(run) this.cancel(String(run.id));
       }
       const messageIds=new Set([...details.messages.map(m=>m.id),...details.derivedMessages]);
@@ -362,6 +379,11 @@ export class ContextService {
         this.db.prepare('UPDATE context_snapshots SET project_id=CASE WHEN project_id=? THEN NULL ELSE project_id END,fragments_json=? WHERE id=?').run(details.projectId,JSON.stringify(fragments),s.id);
         this.db.prepare('UPDATE runs SET context_json=? WHERE id=?').run(JSON.stringify(fragments.map((f:Row)=>({role:f.role,content:f.content}))),s.run_id);
       }
+      for(const snapshotId of details.sharedSnapshots) {
+        this.db.prepare('UPDATE run_progress SET checkpoint=NULL WHERE run_id=(SELECT run_id FROM context_snapshots WHERE id=?)').run(snapshotId);
+        this.db.prepare('DELETE FROM run_steps WHERE run_id=(SELECT run_id FROM context_snapshots WHERE id=?)').run(snapshotId);
+        this.db.prepare('DELETE FROM invocations WHERE run_id=(SELECT run_id FROM context_snapshots WHERE id=?)').run(snapshotId);
+      }
       for(const id of details.derivedMessages) this.db.prepare("UPDATE messages SET content='内容已删除，无法还原' WHERE id=?").run(id);
       for(const session of affectedSessions) this.db.prepare("UPDATE sessions SET title='历史话题（部分内容已删除）' WHERE id=?").run(session.session_id);
       const affectedSessionIds=new Set(affectedSessions.map(s=>s.session_id));
@@ -370,6 +392,12 @@ export class ContextService {
         route.candidates=route.candidates.filter((candidate:Candidate)=>candidate.projectId!==details.projectId && !affectedSessionIds.has(candidate.sessionId));
         if(affectedSessionIds.has(route.sessionId)) route.reason='历史来源已清理';
         this.db.prepare('UPDATE interactions SET route_json=? WHERE id=?').run(JSON.stringify(route),interaction.id);
+      }
+      for(const t of details.tasks.filter(t=>t.action==='delete')) this.db.prepare('DELETE FROM tasks WHERE id=?').run(t.id);
+      this.db.prepare('DELETE FROM directory_grants WHERE project_id=?').run(details.projectId);
+      for(const id of messageIds) {
+        this.db.prepare("UPDATE tasks SET status='open' WHERE id IN(SELECT task_id FROM task_revisions WHERE result_ref=? AND revision=tasks.revision)").run(id);
+        this.db.prepare("UPDATE task_revisions SET result_ref=NULL,evidence=NULL,status='open' WHERE result_ref=?").run(id);
       }
       for(const m of details.messages) this.db.prepare('DELETE FROM messages WHERE id=?').run(m.id);
       for(const r of details.runs) this.db.prepare('DELETE FROM runs WHERE id=?').run(r.id);
@@ -380,7 +408,7 @@ export class ContextService {
       }
       this.db.prepare('UPDATE focus_states SET active_session_id=NULL,interrupted_session_id=NULL,active_project_id=NULL,recent_session_ids=\'[]\',version=version+1 WHERE active_project_id=?').run(details.projectId);
       this.db.prepare('UPDATE sessions SET project_id=NULL WHERE project_id=?').run(details.projectId);
-      this.db.prepare('DELETE FROM sessions WHERE NOT EXISTS(SELECT 1 FROM messages WHERE session_id=sessions.id) AND NOT EXISTS(SELECT 1 FROM interactions WHERE session_id=sessions.id) AND id NOT IN(SELECT active_session_id FROM focus_states WHERE active_session_id IS NOT NULL) AND id NOT IN(SELECT interrupted_session_id FROM focus_states WHERE interrupted_session_id IS NOT NULL)').run();
+      this.db.prepare('DELETE FROM sessions WHERE NOT EXISTS(SELECT 1 FROM messages WHERE session_id=sessions.id) AND NOT EXISTS(SELECT 1 FROM interactions WHERE session_id=sessions.id) AND NOT EXISTS(SELECT 1 FROM tasks WHERE session_id=sessions.id) AND id NOT IN(SELECT active_session_id FROM focus_states WHERE active_session_id IS NOT NULL) AND id NOT IN(SELECT interrupted_session_id FROM focus_states WHERE interrupted_session_id IS NOT NULL)').run();
       this.db.prepare('DELETE FROM delete_previews WHERE project_id=?').run(details.projectId);
       this.db.prepare('UPDATE runs SET project_id=NULL WHERE project_id=?').run(details.projectId);
       this.db.prepare('DELETE FROM projects WHERE id=?').run(details.projectId);

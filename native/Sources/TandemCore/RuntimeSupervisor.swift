@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import Darwin
+import AppKit
 
 @MainActor
 public final class RuntimeSupervisor: ObservableObject {
@@ -17,6 +18,7 @@ public final class RuntimeSupervisor: ObservableObject {
     private var connection: IPCConnection?
     private var directory: String?
     private var stopping = false
+    public let directories = DirectoryAccess()
 
     public init() {}
 
@@ -78,6 +80,15 @@ public final class RuntimeSupervisor: ObservableObject {
                                       hello["nodeVersion"] as? String == "v24.22.2" else { throw IPCError.peer }
                                 return client
                             }.value
+                            let client = connection!
+                            let registrations = directories.registrations()
+                            let access = directories
+                            try await Task.detached {
+                                for grant in registrations {
+                                    do { _ = try client.request("directory.register", payload: grant) }
+                                    catch IPCError.remote("PROJECT_UNAVAILABLE") { access.revoke(grant["id"] as! String) }
+                                }
+                            }.value
                             isConnected = true
                             connectionCount += 1
                             log("ipc_connected")
@@ -86,6 +97,14 @@ public final class RuntimeSupervisor: ObservableObject {
                         try await Task.detached {
                             let data = try client.request("ping")
                             guard data["pong"] as? Bool == true else { throw IPCError.response }
+                        }.value
+                        let access = directories
+                        try await Task.detached {
+                            let work = try client.request("native.next")["requests"] as? [[String: Any]] ?? []
+                            for request in work {
+                                let result = access.execute(request)
+                                _ = try client.request("native.result", payload: ["id": request["id"]!, "result": result])
+                            }
                         }.value
                         pongCount += 1
                         healthyPings += 1
@@ -151,6 +170,18 @@ public final class RuntimeSupervisor: ObservableObject {
         await worker?.value
         worker = nil
         log("runtime_stopped")
+    }
+
+    public func chooseDirectory(projectId: String?, renewing: String? = nil) async throws -> String? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false; panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false; panel.prompt = "授权只读"
+        guard await panel.begin() == .OK, let url = panel.url else { return nil }
+        let id = try directories.authorize(url, projectId: projectId, renewing: renewing)
+        do {
+            _ = try await request("directory.register", payload: directories.registrations().first { $0["id"] as? String == id }!)
+        } catch { directories.revoke(id); throw error }
+        return id
     }
 
     public func reconnect() { connection = nil; isConnected = false }

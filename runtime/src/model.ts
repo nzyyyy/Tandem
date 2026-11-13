@@ -1,9 +1,10 @@
 import { AppError, requireValue } from './errors.ts';
 import type { Connection } from './config.ts';
 
-export type ChatMessage = { role: 'user' | 'assistant'; content: string };
+export type ChatMessage = { role: 'user' | 'assistant' | 'tool'; content: string; toolCalls?: ToolCall[]; callId?: string };
+export type ToolDefinition = { name: string; description: string; parameters: object };
 export type ToolCall = { callId: string; name: string; arguments: string };
-export type ModelResult = { text: string; toolCalls: ToolCall[] };
+export type ModelResult = { text: string; toolCalls: ToolCall[]; usage?: number };
 export type BoundModel = Omit<Connection, 'key' | 'modelNames'> & { modelName: string };
 
 export function endpoint(model: Pick<Connection, 'url' | 'apiType'>): string {
@@ -47,7 +48,9 @@ function normalResponse(api: Connection['apiType'], body: any): ModelResult {
     try { JSON.parse(call.arguments); } catch { throw new AppError('MODEL_INVALID_TOOL_ARGUMENTS'); }
   }
   requireValue(output.length > 0 || toolCalls.length > 0, 'MODEL_EMPTY_RESPONSE');
-  return { text: output, toolCalls };
+  const usage = api === 'messages' ? (body.usage?.input_tokens ?? 0) + (body.usage?.output_tokens ?? 0)
+    : body.usage?.total_tokens;
+  return { text: output, toolCalls, ...(Number.isSafeInteger(usage) && usage > 0 ? { usage } : {}) };
 }
 
 async function* sse(body: ReadableStream<Uint8Array>): AsyncGenerator<any> {
@@ -92,14 +95,29 @@ async function* sse(body: ReadableStream<Uint8Array>): AsyncGenerator<any> {
 
 export async function generate(
   model: BoundModel & { key: string }, messages: ChatMessage[], signal: AbortSignal,
-  onText: (text: string) => void, stream = true, timeoutMs = 90_000
+  onText: (text: string) => void, stream = true, timeoutMs = 90_000, tools: ToolDefinition[] = [], maxTokens = 4096
 ): Promise<ModelResult> {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (model.protocol === 'openai') headers.authorization = `Bearer ${model.key}`;
   else { headers['x-api-key'] = model.key; headers['anthropic-version'] = '2023-06-01'; }
+  const input = messages.flatMap((m): any[] => {
+    if (model.apiType === 'responses') {
+      if (m.role === 'tool') return [{type:'function_call_output',call_id:m.callId,output:m.content}];
+      return [...(m.content ? [{role:m.role,content:m.content}] : []), ...(m.toolCalls ?? []).map(c=>({type:'function_call',call_id:c.callId,name:c.name,arguments:c.arguments}))];
+    }
+    if (model.apiType === 'messages') {
+      if (m.role === 'tool') return [{role:'user',content:[{type:'tool_result',tool_use_id:m.callId,content:m.content}]}];
+      if (!m.toolCalls?.length) return [{role:m.role,content:m.content}];
+      return [{role:m.role,content:[...(m.content ? [{type:'text',text:m.content}] : []),...(m.toolCalls ?? []).map(c=>({type:'tool_use',id:c.callId,name:c.name,input:JSON.parse(c.arguments)}))]}];
+    }
+    return [{role:m.role,content:m.content,...(m.role === 'tool' ? {tool_call_id:m.callId} : {}),
+      ...(m.toolCalls?.length ? {tool_calls:m.toolCalls.map(c=>({id:c.callId,type:'function',function:{name:c.name,arguments:c.arguments}}))} : {})}];
+  });
+  const definitions = tools.map(({name,description,parameters}) => { const t = {name,description,parameters}; return model.apiType === 'messages' ? {name:t.name,description:t.description,input_schema:t.parameters}
+    : model.apiType === 'responses' ? {type:'function',...t,strict:false} : {type:'function',function:t}; });
   const payload = model.apiType === 'responses'
-    ? { model: model.modelName, input: messages, stream, store: false }
-    : { model: model.modelName, messages, stream, ...(model.apiType === 'messages' ? { max_tokens: 4096 } : {}) };
+    ? { model: model.modelName, input, stream, store: false, max_output_tokens:maxTokens, ...(tools.length ? {tools:definitions} : {}) }
+    : { model: model.modelName, messages:input, stream, ...(model.apiType === 'messages' ? { max_tokens:maxTokens } : {max_completion_tokens:maxTokens}), ...(tools.length ? {tools:definitions} : {}) };
   let output = '';
   const emit = (delta: string) => {
     output += delta;
@@ -137,8 +155,11 @@ export async function generate(
     let finish: string | null = null;
     let finalResponse: any;
     const calls = new Map<number, any>();
+    let usage: any;
     for await (const event of sse(response.body)) {
       if (event === '[DONE]') { completed = model.apiType === 'chat_completions' && finish !== null; break; }
+      if (event.usage) usage = model.apiType === 'messages' ? { ...usage, ...event.usage } : event.usage;
+      if (event.message?.usage) usage = event.message.usage;
       if (event.error || event.type === 'error' || ['response.failed', 'response.incomplete'].includes(event.type)) throw new AppError('MODEL_STREAM_FAILED');
       if (model.apiType === 'chat_completions') {
         const choice = event.choices?.[0];
@@ -170,8 +191,8 @@ export async function generate(
     requireValue(completed, 'MODEL_STREAM_INTERRUPTED');
     let result: ModelResult;
     if (model.apiType === 'responses') result = normalResponse(model.apiType, finalResponse);
-    else if (model.apiType === 'chat_completions') result = normalResponse(model.apiType, { choices: [{ finish_reason: finish, message: { content: output, tool_calls: [...calls.values()] } }] });
-    else result = normalResponse(model.apiType, { stop_reason: finish, content: [...calls.values()].map(block => {
+    else if (model.apiType === 'chat_completions') result = normalResponse(model.apiType, { usage, choices: [{ finish_reason: finish, message: { content: output, tool_calls: [...calls.values()] } }] });
+    else result = normalResponse(model.apiType, { usage, stop_reason: finish, content: [...calls.values()].map(block => {
       if (block.type === 'tool_use' && block.partial) return { ...block, input: JSON.parse(block.partial) };
       return block;
     }) });

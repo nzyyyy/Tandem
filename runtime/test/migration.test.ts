@@ -43,10 +43,10 @@ test('M1 to M2 migration preserves identities, causal inputs and focus, and inte
     assert.equal(snapshot.fragments[0].sourceType,'legacy_input');
     assert.equal(app.store.db.prepare('SELECT COUNT(*) AS n FROM interactions').get()!.n,2);
     assert.equal(app.store.db.prepare('PRAGMA foreign_key_check').all().length,0);
-    assert.equal(app.store.db.prepare('PRAGMA user_version').get()!.user_version,2);
+    assert.equal(app.store.db.prepare('PRAGMA user_version').get()!.user_version,3);
     const backups=readdirSync(`${directory}/migrations`);
-    assert.equal(backups.length,1);
-    const backupPath=`${directory}/migrations/${backups[0]}`;
+    assert.equal(backups.length,2);
+    const backupPath=`${directory}/migrations/${backups.find(name=>name.startsWith('schema-1-'))}`;
     assert.equal(statSync(backupPath).mode & 0o777,0o600);
     const original=new DatabaseSync(backupPath,{readOnly:true});
     try {
@@ -91,4 +91,30 @@ test('M1 to M2 migration preserves identities, causal inputs and focus, and inte
     assert.equal(app.store.db.prepare("SELECT content FROM messages WHERE id='a2'").get()!.content,'内容已删除，无法还原');
     assert.equal(app.store.db.prepare('PRAGMA foreign_key_check').all().length,0);
   } finally { await app.stop(); rmSync(directory,{recursive:true,force:true}); }
+});
+
+test('M2 to M3 protects WAL history and rolls back a conflicting schema without altering old tables',async()=>{
+  const directory=mkdtempSync('/tmp/tandem-m3-migration-');
+  const recovery=mkdtempSync('/tmp/tandem-m3-rollback-');
+  try {
+    const initial=new AppService(directory);
+    await initial.stop();
+    const name=readdirSync(`${directory}/migrations`).find(n=>n.startsWith('schema-2-'))!;
+    const path=`${directory}/migrations/${name}`;
+    assert.equal(statSync(path).mode&0o777,0o600);
+    copyFileSync(path,`${recovery}/tandem.sqlite`);
+    const old=new DatabaseSync(`${recovery}/tandem.sqlite`);
+    old.exec("INSERT INTO sessions(id,title,temporary,created_at,updated_at) VALUES('preserve','WAL data',0,1,1); CREATE TABLE tasks(conflict TEXT);");old.close();
+    assert.throws(()=>new AppService(recovery));
+    const unchanged=new DatabaseSync(`${recovery}/tandem.sqlite`);
+    assert.equal(unchanged.prepare('PRAGMA user_version').get()!.user_version,2);
+    assert.equal(unchanged.prepare("SELECT title FROM sessions WHERE id='preserve'").get()!.title,'WAL data');
+    assert.equal(unchanged.prepare("SELECT 1 FROM sqlite_master WHERE name='run_progress'").get(),undefined);
+    unchanged.exec('DROP TABLE tasks');unchanged.close();
+    const upgraded=new AppService(recovery);
+    assert.equal(upgraded.store.db.prepare('PRAGMA user_version').get()!.user_version,3);
+    assert.equal(upgraded.store.db.prepare("SELECT title FROM sessions WHERE id='preserve'").get()!.title,'WAL data');
+    assert.equal(upgraded.store.db.prepare('PRAGMA foreign_key_check').all().length,0);
+    await upgraded.stop();
+  } finally {rmSync(directory,{recursive:true,force:true});rmSync(recovery,{recursive:true,force:true});}
 });

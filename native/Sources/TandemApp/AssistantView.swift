@@ -34,6 +34,7 @@ struct AssistantView: View {
                     .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 28)
                 VStack(spacing: 4) {
                     SelectionRow(title: "对话", symbol: "bubble.left.and.bubble.right", selected: navigation.value == "assistant") { navigate("assistant") }
+                    SelectionRow(title: "Activity", symbol: "list.bullet.rectangle", selected: navigation.value == "activity") { navigate("activity") }
                     SelectionRow(title: "项目", symbol: "folder", selected: navigation.value == "projects") { navigate("projects") }
                     SelectionRow(title: "模型设置", symbol: "slider.horizontal.3", selected: navigation.value == "settings") { navigate("settings") }
                 }.padding(.horizontal, 12)
@@ -70,6 +71,7 @@ struct AssistantView: View {
             Group {
                 if navigation.value == "settings" { ModelSettingsView(model: model, hasUnsavedChanges: $hasUnsavedChanges, busy: $editorBusy) }
                 else if navigation.value == "projects" { ProjectView(model: model, hasUnsavedChanges: $hasUnsavedChanges, working: $editorBusy) }
+                else if navigation.value == "activity" { ActivityView(model: model) }
                 else { conversation }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -153,6 +155,13 @@ struct AssistantView: View {
                                 PendingInteractionView(interaction: pending, model: model)
                             }
                         }
+                        ApprovalCards(model: model)
+                        ForEach(model.snapshot?.activity.runs.filter { $0.status == "paused" } ?? []) { run in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("执行预算已用尽：\(run.steps)/\(run.step_limit) 步 · \(run.tokens)/\(run.token_limit) Token · \(run.active_ms / 1000)/\(run.time_limit / 1000) 秒")
+                                Button("在 Activity 查看进度与追加预算") { navigate("activity") }
+                            }
+                        }
                         Color.clear.frame(height: 1).id("bottom")
                     }
                     .frame(maxWidth: 724, alignment: .leading)
@@ -197,6 +206,11 @@ struct AssistantView: View {
                 Button(userFacingError(error) + " 打开模型设置") { navigate("settings") }.foregroundStyle(.red)
             }
             ContextControls(model: model)
+            Toggle("持续任务（保存交付物与完成标准）", isOn: $model.createTask).toggleStyle(.checkbox).font(.caption)
+            if model.createTask {
+                TextField("预期交付物，如：资料优化建议 Markdown 报告", text: $model.taskDeliverable)
+                TextField("完成标准，每行一条", text: $model.taskCriteria, axis: .vertical).lineLimit(2...5)
+            }
             VStack(alignment: .leading, spacing: 16) {
                 TextField("继续这个想法，或开始一个新问题…", text: $model.draft, axis: .vertical)
                     .font(.system(size: 15)).lineLimit(2...7).textFieldStyle(.plain)
