@@ -12,6 +12,9 @@ const server = createServer(async (request, response) => {
   assert.equal(body.model, 'smoke-model');
   paths.push(request.url);
   const messages = body.messages ?? body.input;
+  if (JSON.stringify(messages).includes('M4 current decision')) {
+    assert.ok(messages.some(m=>m.content.includes('长期记忆') && m.content.includes('SQLite') && m.content.includes('messageId')));
+  }
   if (JSON.stringify(messages).includes('M3 native read')) {
     response.setHeader('content-type','application/json');
     const result = messages.find(m=>m.role==='tool');
@@ -57,5 +60,5 @@ try {
   timer = setTimeout(() => child.kill('SIGKILL'), 45000);
   const [code] = await once(child, 'exit');
   assert.equal(code, 0);
-  assert.deepEqual(paths, ['/v1/responses', '/v1/chat/completions', '/v1/messages', '/v1/messages', '/v1/messages', '/v1/messages', '/v1/chat/completions', '/v1/chat/completions']);
+  assert.deepEqual(paths, ['/v1/responses', '/v1/chat/completions', '/v1/messages', '/v1/messages', '/v1/messages', '/v1/messages', '/v1/chat/completions', '/v1/chat/completions', '/v1/chat/completions']);
 } finally { clearTimeout(timer); server.closeAllConnections(); server.close(); }

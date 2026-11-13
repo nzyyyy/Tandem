@@ -158,6 +158,7 @@ public struct ProjectDeletion: Codable {
     public var messages: [DeletionItem]
     public var runs: [DeletionItem]
     public var tasks: [DeletionItem]
+    public var memories: [DeletionItem]
     public var sharedSnapshots: [String]
     public var derivedMessages: [String]
 }
@@ -173,6 +174,13 @@ public struct CorrectionHistory: Codable { public var corrections: [CorrectionRe
 public func userFacingError(_ code: String) -> String {
     let messages = [
         "PROJECT_LIMIT": "当前验证版本最多保留 200 个项目。请先整理已有项目。",
+        "MEMORY_SENSITIVE": "记忆中可能包含敏感信息或凭据，未保存。",
+        "MEMORY_FORGOTTEN": "此原始证据受遗忘标记保护。请先在长期记忆中明确允许重新记住。",
+        "MEMORY_CONFLICT": "记忆已更新，请刷新后重试。",
+        "MEMORY_EVIDENCE_CHANGED": "原始证据的归属或版本已变化，请重新核验来源。",
+        "MEMORY_NOT_FOUND": "记忆已删除或不可用，请刷新。",
+        "MEMORY_UNAVAILABLE": "执行使用的记忆已失效，请手动重新处理以获取当前上下文。",
+        "MEMORY_CONFIRM_REQUIRED": "请明确确认此记忆操作。",
         "PROJECT_REQUIRED": "请先选择项目，再确认这条输入。",
         "PROJECT_UNAVAILABLE": "项目已归档或不可用，请恢复项目或重新选择。",
         "PROJECT_CONFLICT": "项目已被修改，请重新加载后重试。",

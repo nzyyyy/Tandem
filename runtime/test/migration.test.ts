@@ -43,9 +43,9 @@ test('M1 to M2 migration preserves identities, causal inputs and focus, and inte
     assert.equal(snapshot.fragments[0].sourceType,'legacy_input');
     assert.equal(app.store.db.prepare('SELECT COUNT(*) AS n FROM interactions').get()!.n,2);
     assert.equal(app.store.db.prepare('PRAGMA foreign_key_check').all().length,0);
-    assert.equal(app.store.db.prepare('PRAGMA user_version').get()!.user_version,3);
+    assert.equal(app.store.db.prepare('PRAGMA user_version').get()!.user_version,4);
     const backups=readdirSync(`${directory}/migrations`);
-    assert.equal(backups.length,2);
+    assert.equal(backups.length,3);
     const backupPath=`${directory}/migrations/${backups.find(name=>name.startsWith('schema-1-'))}`;
     assert.equal(statSync(backupPath).mode & 0o777,0o600);
     const original=new DatabaseSync(backupPath,{readOnly:true});
@@ -112,7 +112,7 @@ test('M2 to M3 protects WAL history and rolls back a conflicting schema without 
     assert.equal(unchanged.prepare("SELECT 1 FROM sqlite_master WHERE name='run_progress'").get(),undefined);
     unchanged.exec('DROP TABLE tasks');unchanged.close();
     const upgraded=new AppService(recovery);
-    assert.equal(upgraded.store.db.prepare('PRAGMA user_version').get()!.user_version,3);
+    assert.equal(upgraded.store.db.prepare('PRAGMA user_version').get()!.user_version,4);
     assert.equal(upgraded.store.db.prepare("SELECT title FROM sessions WHERE id='preserve'").get()!.title,'WAL data');
     assert.equal(upgraded.store.db.prepare('PRAGMA foreign_key_check').all().length,0);
     await upgraded.stop();

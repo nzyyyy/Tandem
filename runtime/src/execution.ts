@@ -7,6 +7,7 @@ import { AppError, record, requireValue, text } from './errors.ts';
 import { privateDirectory, redact } from './config.ts';
 import type { AppConfig } from './config.ts';
 import type { ChatMessage, ToolCall } from './model.ts';
+import { memoryFragmentValid, memoryScopeAllowed } from './memory.ts';
 
 type Row = Record<string, any>;
 export const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -20,7 +21,7 @@ export const toolDefinitions = [
 
 export function migrateM3(store: Store, directory: string) {
   const db = store.db;
-  if (Number(db.prepare('PRAGMA user_version').get()!.user_version) === 3) return;
+  if (Number(db.prepare('PRAGMA user_version').get()!.user_version) >= 3) return;
   const backups = join(directory, 'migrations'); privateDirectory(backups);
   const path = join(backups, `schema-2-${randomUUID()}.sqlite`);
   // The private parent protects the VACUUM output until its permissions are restricted.
@@ -70,7 +71,8 @@ export class Execution {
     requireValue(r && r.interaction_version === r.version && ['running','queued','waiting_approval','paused','interrupted'].includes(String(r.status)), 'INTERACTION_CHANGED');
     const p = this.progress(String(run.id));
     if (p.checkpoint) for (const f of JSON.parse(String(p.checkpoint)).fragments) {
-      requireValue(!f.deleted && f.projectId===run.project_id,'CONTEXT_SCOPE');
+      requireValue(!f.deleted && memoryScopeAllowed(f,run.project_id,run.context_mode),'CONTEXT_SCOPE');
+      requireValue(memoryFragmentValid(this.store,f,{projectId:run.project_id,mode:run.context_mode}),'MEMORY_UNAVAILABLE');
       if (f.grantId) requireValue(this.db.prepare("SELECT 1 FROM directory_grants WHERE id=? AND status='active' AND project_id IS ?").get(f.grantId,run.project_id),'DIRECTORY_UNAUTHORIZED');
     }
     if (p.task_id) requireValue(this.db.prepare('SELECT revision FROM tasks WHERE id=? AND project_id IS ?').get(p.task_id,run.project_id)?.revision === p.revision, 'TASK_REVISION_CHANGED');

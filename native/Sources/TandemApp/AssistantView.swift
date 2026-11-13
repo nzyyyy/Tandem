@@ -36,6 +36,7 @@ struct AssistantView: View {
                     SelectionRow(title: "对话", symbol: "bubble.left.and.bubble.right", selected: navigation.value == "assistant") { navigate("assistant") }
                     SelectionRow(title: "Activity", symbol: "list.bullet.rectangle", selected: navigation.value == "activity") { navigate("activity") }
                     SelectionRow(title: "项目", symbol: "folder", selected: navigation.value == "projects") { navigate("projects") }
+                    SelectionRow(title: "长期记忆", symbol: "brain", selected: navigation.value == "memory") { navigate("memory") }
                     SelectionRow(title: "模型设置", symbol: "slider.horizontal.3", selected: navigation.value == "settings") { navigate("settings") }
                 }.padding(.horizontal, 12)
                 Text("最近话题").font(.caption.weight(.medium)).foregroundStyle(TandemStyle.secondary)
@@ -72,6 +73,7 @@ struct AssistantView: View {
                 if navigation.value == "settings" { ModelSettingsView(model: model, hasUnsavedChanges: $hasUnsavedChanges, busy: $editorBusy) }
                 else if navigation.value == "projects" { ProjectView(model: model, hasUnsavedChanges: $hasUnsavedChanges, working: $editorBusy) }
                 else if navigation.value == "activity" { ActivityView(model: model) }
+                else if navigation.value == "memory" { MemoryView(model: model, working: $editorBusy) { navigate("assistant", sessionId: $0) } }
                 else { conversation }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

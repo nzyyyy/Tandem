@@ -226,12 +226,32 @@ func smokeTest() async {
         guard let task = assistant.snapshot?.activity.tasks.first, let resultId = task.result_ref,
               try await assistant.result(resultId).contains("原生读取资料"),
               try String(contentsOf: source, encoding: .utf8) == "原生读取资料\n第二行" else { throw IPCError.response }
+        guard let evidence = assistant.messages.first(where: { $0.role == "user" && $0.interactionId == scoped.interactionId }),
+              let evidenceVersion = evidence.interactionVersion else { throw IPCError.response }
+        let savedMemory = try await runtime.request("memory.save", payload: ["surfaceId": "smoke", "messageId": evidence.id,
+            "expectedInteractionVersion": evidenceVersion, "kind": "decision", "subject": "项目", "predicate": "数据库", "content": "SQLite", "confirmed": true])
+        guard let memoryId = savedMemory["id"] as? String else { throw IPCError.response }
+        assistant.newTopic = true; assistant.draft = "M4 current decision"
+        await assistant.send()
+        try await waitFor { assistant.messages.last?.status == "completed" }
+        guard let memorySnapshotId = assistant.messages.last?.snapshotId else { throw IPCError.response }
+        let memoryContext = try await assistant.context(memorySnapshotId)
+        guard memoryContext.fragments.contains(where: { $0.sourceType == "memory" && $0.sourceId == memoryId && $0.content.contains("SQLite") }) else { throw IPCError.response }
+        let detail = try await runtime.request("memory.get", payload: ["surfaceId": "smoke", "id": memoryId])
+        guard let version = detail["version"] as? Int,
+              (detail["evidence"] as? [[String: Any]])?.first?["message_id"] as? String == evidence.id else { throw IPCError.response }
+        _ = try await runtime.request("memory.forget", payload: ["surfaceId": "smoke", "id": memoryId, "expectedVersion": version])
+        let forgotten = try await runtime.request("memory.list", payload: ["surfaceId": "smoke"])
+        guard (forgotten["memories"] as? [[String: Any]])?.isEmpty == true,
+              (forgotten["markers"] as? [[String: Any]])?.count == 1 else { throw IPCError.response }
+        let sanitized = try await assistant.context(memorySnapshotId)
+        guard sanitized.fragments.contains(where: { $0.sourceId == memoryId && $0.deleted == true && !$0.content.contains("SQLite") }) else { throw IPCError.response }
         polling.cancel()
         await runtime.stop()
         try await Task.sleep(for: .seconds(2))
         guard runtime.nodePID == 0, kill(lastPID, 0) == -1, errno == ESRCH else { throw IPCError.peer }
         try? FileManager.default.removeItem(at: dataDirectory)
-        print("PASS Swift → Node: three-API chat, M2 pending route, isolated snapshot, correction/reprocess, M3 native read and Task artifact, persistence, reconnect, crash restart, quit cleanup")
+        print("PASS Swift → Node: three-API chat, M2 routing/correction, M3 native Task, M4 memory evidence/snapshot/forget, persistence, reconnect, crash restart, quit cleanup")
         exit(0)
     } catch {
         await runtime.stop()

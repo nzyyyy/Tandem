@@ -4,6 +4,7 @@ import { record, requireValue, text } from './errors.ts';
 import { bindModel, redact } from './config.ts';
 import type { AppConfig } from './config.ts';
 import type { BoundModel, ChatMessage } from './model.ts';
+import { MemoryEngine, memoryFragmentValid, memoryScopeAllowed } from './memory.ts';
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const segmenter = new Intl.Segmenter('zh', { granularity: 'word' });
@@ -17,8 +18,10 @@ export class ContextService {
   readonly config: () => AppConfig;
   readonly createRun: (messageId: string, sessionId: string, binding: BoundModel, key: string, fingerprint: string, retryOf: string | null, attempt: number) => string;
   readonly cancel: (runId: string) => void;
+  readonly memory: MemoryEngine;
   constructor(store: Store, config: () => AppConfig, createRun: ContextService['createRun'], cancel: ContextService['cancel']) {
     this.store = store; this.config = config; this.createRun = createRun; this.cancel = cancel;
+    this.memory = new MemoryEngine(store, config, cancel);
     this.rebuildSearch();
   }
   private get db() { return this.store.db; }
@@ -108,7 +111,7 @@ export class ContextService {
       requireValue(this.allowed(s.project_id, focus, true), 'CONTEXT_SCOPE');
       const fragments = JSON.parse(String(s.fragments_json));
       for (const f of fragments) {
-        requireValue(f.deleted || this.allowed(f.projectId, focus, true), 'CONTEXT_SCOPE');
+        requireValue(f.deleted || (f.sourceType==='memory' && f.projectId===null && focus.contextMode!=='isolated') || this.allowed(f.projectId, focus, true), 'CONTEXT_SCOPE');
         if (f.grantId && !f.deleted) requireValue(this.db.prepare("SELECT 1 FROM directory_grants WHERE id=? AND status='active' AND project_id IS ?").get(f.grantId,f.projectId),'DIRECTORY_UNAUTHORIZED');
       }
       return { id: s.id, mode: s.mode, projectId: s.project_id, fragments };
@@ -252,6 +255,7 @@ export class ContextService {
       const messageId=randomUUID();
       this.db.prepare("INSERT INTO messages(id,session_id,sequence,role,content,created_at,interaction_id) VALUES(?,?,?,'user',?,?,?)").run(messageId,sessionId,i.sequence,i.input,Date.now(),id);
       this.db.prepare("UPDATE interactions SET status='committed',version=version+1,project_id=?,session_id=?,message_id=?,route_json=? WHERE id=?").run(projectId,sessionId,messageId,JSON.stringify(route),id);
+      this.memory.extract(id);
       this.setFocus(surfaceId,sessionId,projectId,!!route.temporary);
       this.db.prepare('UPDATE sessions SET updated_at=? WHERE id=?').run(Date.now(),sessionId);
       this.store.changed(messageId);
@@ -272,6 +276,7 @@ export class ContextService {
       if (i.project_id === (target?.id ?? null)) return {version:i.version};
       const version=Number(i.version)+1;
       this.db.prepare('UPDATE interactions SET project_id=?,version=? WHERE id=?').run(target?.id ?? null,version,id);
+      this.memory.correct(id);
       const eventId=randomUUID();
       this.db.prepare('INSERT INTO corrections VALUES(?,?,?,?,?,?)').run(eventId,id,i.project_id,target?.id ?? null,version,Date.now());
       this.db.prepare("INSERT INTO events(id,schema_version,type,aggregate_id,correlation_id,causation_id,occurred_at,payload_ref) VALUES(?,1,'interaction.corrected',?,?,?, ?,?)").run(eventId,id,id,null,Date.now(),eventId);
@@ -286,6 +291,7 @@ export class ContextService {
     this.project(i.project_id);
     this.db.prepare('UPDATE runs SET interaction_id=?,interaction_version=?,project_id=?,context_mode=? WHERE id=?').run(i.id,i.version,i.project_id,old.context_mode,runId);
     this.db.prepare("INSERT INTO outbox VALUES(?,'run','pending') ON CONFLICT(interaction_id) DO UPDATE SET kind='run',status='pending'").run(i.id);
+    if (i.version!==old.interaction_version) this.memory.extract(String(i.id),false);
   }
   valid(run: Row) {
     const i=this.db.prepare('SELECT version FROM interactions WHERE id=?').get(run.interaction_id);
@@ -308,7 +314,7 @@ export class ContextService {
     const safe=rows.filter(row => {
       if(row.role!=='assistant' || !row.snapshot_id) return row.role==='user';
       const snapshots=this.db.prepare('SELECT fragments_json FROM context_snapshots WHERE run_id=?').all(row.source_run_id);
-      return snapshots.length>0 && snapshots.every(s=>JSON.parse(String(s.fragments_json)).every((f:Row)=>!f.deleted && f.projectId===run.project_id && (!f.grantId || this.db.prepare("SELECT 1 FROM directory_grants WHERE id=? AND status='active' AND project_id IS ?").get(f.grantId,run.project_id))));
+      return snapshots.length>0 && snapshots.every(s=>JSON.parse(String(s.fragments_json)).every((f:Row)=>!f.deleted && memoryFragmentValid(this.store,f,{projectId:run.project_id,mode:run.context_mode}) && memoryScopeAllowed(f,run.project_id,run.context_mode) && (!f.grantId || this.db.prepare("SELECT 1 FROM directory_grants WHERE id=? AND status='active' AND project_id IS ?").get(f.grantId,run.project_id))));
     });
     let selected=safe.slice(-40); while(selected[0]?.role==='assistant') selected.shift();
     let size=0;
@@ -321,6 +327,7 @@ export class ContextService {
     }
     while(fragments[0]?.role==='assistant') fragments.shift();
     requireValue(fragments.some(f=>f.sourceId===run.user_message_id),'CONTEXT_TOO_LARGE');
+    fragments.unshift(...this.memory.retrieve(run.project_id,String(i.input),String(run.context_mode)));
     const messages=fragments.map(f=>({role:f.role,content:f.content})) as ChatMessage[];
     this.store.transaction(()=>{
       requireValue(this.interaction(String(run.interaction_id)).version===run.interaction_version,'INTERACTION_CHANGED');
@@ -355,7 +362,8 @@ export class ContextService {
       }
     }
     const tasks=this.db.prepare('SELECT t.id,t.revision,t.project_id,v.result_ref FROM tasks t JOIN task_revisions v ON v.task_id=t.id ORDER BY t.id,v.revision').all().filter(t=>t.project_id===id || sources.has(t.result_ref)).map(t=>({id:t.id,revision:t.revision,action:t.project_id===id?'delete':'clear_result'}));
-    return {tasks,projectId:id,title:project.title,version:project.version,interactions,runs,messages,sharedSnapshots:[...shared].sort(),derivedMessages:[...derived].sort(),externalFilesDeleted:false};
+    const memories=this.memory.projectMemories(id,messages.map(m=>String(m.id)));
+    return {memories,tasks,projectId:id,title:project.title,version:project.version,interactions,runs,messages,sharedSnapshots:[...shared].sort(),derivedMessages:[...derived].sort(),externalFilesDeleted:false};
   }
 
   private deleteProject(p: Row) {
@@ -366,6 +374,7 @@ export class ContextService {
       const details=this.deletionDetails(String(preview.project_id));
       requireValue(hash(details)===preview.revision,'DELETE_PREVIEW_CHANGED');
       this.db.exec('PRAGMA defer_foreign_keys=ON');
+      this.memory.deleteProject(details.projectId,details.messages.map(m=>String(m.id)));
       for(const r of details.runs) this.cancel(String(r.id));
       for(const messageId of details.derivedMessages) {
         const run=this.db.prepare("SELECT r.id FROM runs r JOIN messages m ON m.run_id=r.id WHERE m.id=? AND r.status IN('queued','running','paused','waiting_approval','interrupted')").get(messageId);
