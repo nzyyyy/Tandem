@@ -174,3 +174,212 @@ test('credential redaction, event replay, pagination and invalid config preserva
     assert.match(readFileSync(env.service.config.path, 'utf8'), /bad-private-value/);
   } finally { await env.close(); }
 });
+
+const project = (service: AppService, title: string): string => (service.dispatch('project.create', { title, description: '' }) as any).id;
+function scope(service: AppService, projectId: string | null, mode = 'automatic', surfaceId = 'a') {
+  return service.dispatch('context.set', { surfaceId, projectId, mode, expectedVersion: state(service, surfaceId).focus.version });
+}
+function confirm(service: AppService, interactionId: string, sessionId: string | null = null): any {
+  const pending = state(service).pendingInteractions.find((i: any) => i.id === interactionId);
+  return service.dispatch('interaction.confirm', { surfaceId: 'a', interactionId, sessionId, expectedVersion: pending.version, expectedFocusVersion: state(service).focus.version });
+}
+
+test('M2 ambiguity reserves order, persists across restart, and commits only once after explicit choice', async () => {
+  const env = await environment();
+  try {
+    const p = project(env.service, 'Alpha'); scope(env.service,p);
+    const first = send(env.service, 'm2-a', 'alpha architecture', {newTopic:true});
+    await waitFor(() => status(env.service,first.runId)==='completed');
+    const session = state(env.service).focus.activeSessionId;
+    const second = send(env.service, 'm2-b', 'alpha storage', {newTopic:true});
+    await waitFor(() => status(env.service,second.runId)==='completed');
+    const before = state(env.service);
+    const pending = send(env.service,'m2-c','继续 alpha');
+    assert.ok(pending.interactionId);
+    assert.deepEqual(state(env.service).focus,before.focus);
+    assert.equal(state(env.service).messages.length,before.messages.length);
+    assert.equal(env.requests.length,2);
+    assert.deepEqual(send(env.service,'m2-c','继续 alpha'),pending);
+    const saved = state(env.service).pendingInteractions[0];
+    assert.equal(saved.route.candidates.length,2);
+    assert.equal(saved.sequence,5);
+    await env.service.stop();
+    const reopened = new AppService(env.directory);
+    try {
+      assert.equal(state(reopened).pendingInteractions[0].id,pending.interactionId);
+      assert.equal(env.requests.length,2);
+      assert.throws(()=>reopened.dispatch('interaction.confirm',{surfaceId:'a',interactionId:pending.interactionId,sessionId:session,expectedVersion:99,expectedFocusVersion:state(reopened).focus.version}),/INTERACTION_CONFLICT/);
+      const result = confirm(reopened,pending.interactionId,session);
+      assert.deepEqual(reopened.dispatch('interaction.confirm',{surfaceId:'a',interactionId:pending.interactionId,sessionId:session,expectedVersion:1,expectedFocusVersion:1}),result);
+      await waitFor(()=>status(reopened,result.runId)==='completed');
+      const message = state(reopened).messages.find((m:any)=>m.interactionId===pending.interactionId&&m.role==='user');
+      assert.equal(message.sequence,saved.sequence);
+      assert.equal(message.sessionId,session);
+      assert.equal(state(reopened).pendingInteractions.length,0);
+      assert.equal(reopened.store.db.prepare('SELECT COUNT(*) AS n FROM runs WHERE interaction_id=?').get(pending.interactionId)!.n,1);
+    } finally { await reopened.stop(); }
+  } finally { await env.close(); }
+});
+
+test('M2 isolated scope filters candidates, snapshots and causal inputs, including explicit cross-project resume',async()=>{
+  const env=await environment();
+  try {
+    const a=project(env.service,'Alpha private'); const b=project(env.service,'Beta private');
+    scope(env.service,a);
+    const original=send(env.service,'iso-a','alpha private credentials');
+    await waitFor(()=>status(env.service,original.runId)==='completed');
+    const old=state(env.service).messages.find((m:any)=>m.runId===original.runId);
+    const session=state(env.service).focus.activeSessionId;
+    scope(env.service,b,'isolated');
+    const pending=send(env.service,'iso-b','继续 alpha private credentials');
+    assert.ok(pending.interactionId);
+    assert.equal(state(env.service).pendingInteractions[0].route.candidates.length,0);
+    assert.equal(state(env.service).sessions.length,0);
+    assert.throws(()=>confirm(env.service,pending.interactionId,session),/CONTEXT_SCOPE/);
+    assert.throws(()=>env.service.dispatch('snapshot.get',{id:old.snapshotId,surfaceId:'a'}),/CONTEXT_SCOPE/);
+    const result=confirm(env.service,pending.interactionId);
+    await waitFor(()=>status(env.service,result.runId)==='completed');
+    assert.deepEqual(env.requests.at(-1)!.input.messages.map((m:any)=>m.content),['继续 alpha private credentials']);
+    scope(env.service,null,'isolated');
+    const unresolved=send(env.service,'iso-missing','hello');
+    assert.ok(unresolved.interactionId);
+    assert.throws(()=>confirm(env.service,unresolved.interactionId),/PROJECT_REQUIRED/);
+    assert.equal(env.requests.length,2);
+    assert.throws(()=>env.service.dispatch('session.focus',{surfaceId:'a',sessionId:session,expectedVersion:state(env.service).focus.version}),/CONTEXT_SCOPE/);
+  } finally { await env.close(); }
+});
+
+test('M2 correction affects one interaction, stops queued work and reprocesses with a fresh immutable snapshot',async()=>{
+  const env=await environment('queue');
+  try {
+    const a=project(env.service,'source');const b=project(env.service,'target');scope(env.service,a);
+    const first=send(env.service,'correct-a','first');
+    await waitFor(()=>env.requests.length===1);
+    const queued=send(env.service,'correct-b','second');
+    const user=state(env.service).messages.find((m:any)=>m.role==='user'&&m.content==='second');
+    const before=state(env.service).messages.map((m:any)=>[m.id,m.sequence]);
+    env.service.dispatch('interaction.correct',{surfaceId:'a',interactionId:user.interactionId,projectId:b,expectedVersion:user.interactionVersion});
+    assert.equal(status(env.service,queued.runId),'cancelled');
+    const untouched=env.service.store.db.prepare('SELECT project_id FROM interactions WHERE message_id=(SELECT user_message_id FROM runs WHERE id=?)').get(first.runId);
+    assert.equal(untouched!.project_id,a);
+    assert.deepEqual(state(env.service).messages.map((m:any)=>[m.id,m.sequence]),before);
+    reply(env.requests[0].response,env.requests[0].path,'source-answer');
+    await waitFor(()=>status(env.service,first.runId)==='completed');
+    const snapshotBefore=env.service.store.db.prepare('SELECT fragments_json FROM context_snapshots WHERE run_id=?').get(first.runId)!.fragments_json;
+    const retried:any=env.service.dispatch('message.retry',{runId:queued.runId,idempotencyKey:'correct-retry'});
+    await waitFor(()=>env.requests.length===2);
+    assert.deepEqual(env.requests[1].input.messages.map((m:any)=>m.content),['second']);
+    reply(env.requests[1].response,env.requests[1].path,'target-answer');
+    await waitFor(()=>status(env.service,retried.runId)==='completed');
+    assert.equal(env.service.store.db.prepare('SELECT project_id FROM runs WHERE id=?').get(retried.runId)!.project_id,b);
+    assert.equal(env.service.store.db.prepare('SELECT fragments_json FROM context_snapshots WHERE run_id=?').get(first.runId)!.fragments_json,snapshotBefore);
+    assert.equal((env.service.dispatch('interaction.history',{interactionId:user.interactionId}) as any).corrections.length,1);
+    assert.throws(()=>env.service.dispatch('interaction.correct',{surfaceId:'a',interactionId:user.interactionId,projectId:a,expectedVersion:user.interactionVersion}),/INTERACTION_CONFLICT/);
+  } finally { await env.close(); }
+});
+
+test('M2 project archive keeps history; deletion requires a fresh preview and preserves unrelated interactions',async()=>{
+  const env=await environment();
+  try {
+    const a=project(env.service,'remove');const b=project(env.service,'keep');scope(env.service,a);
+    const first=send(env.service,'delete-a','remove only');
+    await waitFor(()=>status(env.service,first.runId)==='completed');
+    const p:any=state(env.service).projects.find((p:any)=>p.id===a);
+    env.service.dispatch('project.update',{id:a,title:p.title,description:'',status:'archived',expectedVersion:p.version});
+    assert.equal(env.service.store.db.prepare('SELECT COUNT(*) AS n FROM messages').get()!.n,2);
+    assert.equal(state(env.service).sessions.length,0);
+    env.service.dispatch('project.update',{id:a,title:p.title,description:'',status:'open',expectedVersion:p.version+1});
+    scope(env.service,b);
+    const keep=send(env.service,'delete-b','keep this');
+    await waitFor(()=>status(env.service,keep.runId)==='completed');
+    const preview:any=env.service.dispatch('project.deletePreview',{id:a});
+    assert.equal(preview.interactions.length,1);assert.equal(preview.messages.length,2);
+    assert.throws(()=>env.service.dispatch('project.delete',{token:preview.token}),/DELETE_CONFIRM_REQUIRED/);
+    env.service.dispatch('project.update',{id:a,title:'edited',description:'',status:'open',expectedVersion:p.version+2});
+    assert.throws(()=>env.service.dispatch('project.delete',{token:preview.token,confirm:true}),/DELETE_PREVIEW_CHANGED/);
+    const fresh:any=env.service.dispatch('project.deletePreview',{id:a});
+    const cursor=state(env.service).cursor;
+    env.service.dispatch('project.delete',{token:fresh.token,confirm:true});
+    assert.equal(env.service.store.db.prepare('PRAGMA foreign_key_check').all().length,0);
+    assert.equal(env.service.store.db.prepare('SELECT COUNT(*) AS n FROM messages').get()!.n,2);
+    assert.equal(status(env.service,keep.runId),'completed');
+    assert.throws(()=>state(env.service,'a',{afterSequence:cursor}),/GAP_REQUIRED/);
+    assert.equal(state(env.service).projects.some((p:any)=>p.id===a),false);
+  } finally { await env.close(); }
+});
+
+test('M2 snapshot fragments remain unchanged after source edits, and neither keys nor other-project answers enter a new context',async()=>{
+  const env=await environment();
+  try {
+    const a=project(env.service,'A');scope(env.service,a);
+    const first=send(env.service,'snap-a','secret-service-key original');
+    await waitFor(()=>status(env.service,first.runId)==='completed');
+    const run=state(env.service).messages.find((m:any)=>m.runId===first.runId);
+    const snap:any=env.service.dispatch('snapshot.get',{id:run.snapshotId,surfaceId:'a'});
+    assert.equal(snap.fragments[0].sourceType,'message');
+    assert.equal(snap.fragments[0].sourceVersion.length,64);
+    assert.equal(JSON.stringify(snap).includes('secret-service-key'),false);
+    env.service.store.db.prepare("UPDATE messages SET content='edited' WHERE role='user'").run();
+    assert.deepEqual(env.service.dispatch('snapshot.get',{id:run.snapshotId,surfaceId:'a'}),snap);
+    const message=state(env.service).messages.find((m:any)=>m.role==='user');
+    const b=project(env.service,'B');
+    env.service.dispatch('interaction.correct',{surfaceId:'a',interactionId:message.interactionId,projectId:b,expectedVersion:message.interactionVersion});
+    const retry:any=env.service.dispatch('message.retry',{runId:first.runId,idempotencyKey:'snap-reprocess'});
+    await waitFor(()=>status(env.service,retry.runId)==='completed');
+    assert.deepEqual(env.requests.at(-1)!.input.messages.map((m:any)=>m.content),['edited']);
+    assert.deepEqual(env.service.dispatch('snapshot.get',{id:run.snapshotId,surfaceId:'a'}),snap);
+  } finally { await env.close(); }
+});
+
+test('M2 only explicit creation creates projects; exact named creation is atomic with its interaction',async()=>{
+  const env=await environment();
+  try {
+    const first=send(env.service,'project-topic','聊聊数据库项目');
+    await waitFor(()=>status(env.service,first.runId)==='completed');
+    assert.equal(state(env.service).projects.length,0);
+    const created=send(env.service,'project-explicit','创建一个旅行项目');
+    await waitFor(()=>status(env.service,created.runId)==='completed');
+    assert.equal(state(env.service).projects.length,1);
+    assert.equal(state(env.service).projects[0].title,'旅行');
+    assert.deepEqual(send(env.service,'project-explicit','创建一个旅行项目'),created);
+    assert.equal(state(env.service).projects.length,1);
+  } finally { await env.close(); }
+});
+
+test('M2 in-flight correction rejects late output, repeated reprocessing stays idempotent and shared-session deletion keeps other work',async()=>{
+  const env=await environment('hold');
+  try {
+    const a=project(env.service,'original');const b=project(env.service,'corrected');scope(env.service,a);
+    const first=send(env.service,'late','late question');
+    await waitFor(()=>env.requests.length===1);
+    const user=state(env.service).messages.find((m:any)=>m.role==='user');
+    env.service.dispatch('interaction.correct',{surfaceId:'a',interactionId:user.interactionId,projectId:b,expectedVersion:user.interactionVersion});
+    reply(env.requests[0].response,env.requests[0].path,'late result must not overwrite');
+    await waitFor(()=>status(env.service,first.runId)==='cancelled');
+    assert.equal(env.service.store.db.prepare('SELECT content FROM messages WHERE run_id=?').get(first.runId)!.content,'');
+    const retry:any=env.service.dispatch('message.retry',{runId:first.runId,idempotencyKey:'late-retry'});
+    await waitFor(()=>env.requests.length===2);
+    reply(env.requests[1].response,env.requests[1].path,'corrected answer');
+    await waitFor(()=>status(env.service,retry.runId)==='completed');
+    const corrected=state(env.service).messages.find((m:any)=>m.id===user.id);
+    env.service.dispatch('interaction.correct',{surfaceId:'a',interactionId:user.interactionId,projectId:a,expectedVersion:corrected.interactionVersion});
+    const reprocessed:any=env.service.dispatch('message.retry',{runId:first.runId,idempotencyKey:'late-reprocess'});
+    assert.deepEqual(env.service.dispatch('message.retry',{runId:first.runId,idempotencyKey:'late-reprocess'}),reprocessed);
+    await waitFor(()=>env.requests.length===3);
+    reply(env.requests[2].response,env.requests[2].path,'third answer');
+    await waitFor(()=>status(env.service,reprocessed.runId)==='completed');
+    const another=send(env.service,'shared-keep','another question');
+    await waitFor(()=>env.requests.length===4);
+    const preview:any=env.service.dispatch('project.deletePreview',{id:b});
+    env.service.dispatch('project.delete',{token:preview.token,confirm:true});
+    reply(env.requests[3].response,env.requests[3].path,'late derived answer');
+    await new Promise(resolve=>setTimeout(resolve,30));
+    assert.equal(status(env.service,another.runId),'cancelled');
+    assert.equal(env.service.store.db.prepare('SELECT content FROM messages WHERE run_id=?').get(another.runId)!.content,'内容已删除，无法还原');
+    assert.equal(env.service.store.db.prepare('SELECT title FROM sessions LIMIT 1').get()!.title,'历史话题（部分内容已删除）');
+    const fragments=JSON.parse(String(env.service.store.db.prepare('SELECT fragments_json FROM context_snapshots WHERE run_id=?').get(another.runId)!.fragments_json));
+    assert.ok(fragments.some((f:any)=>f.deleted===true));
+    assert.equal(JSON.stringify(fragments).includes('third answer'),false);
+    assert.equal(env.service.store.db.prepare('PRAGMA foreign_key_check').all().length,0);
+  } finally {await env.close();}
+});

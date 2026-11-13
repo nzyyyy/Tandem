@@ -40,5 +40,5 @@ try {
   timer = setTimeout(() => child.kill('SIGKILL'), 45000);
   const [code] = await once(child, 'exit');
   assert.equal(code, 0);
-  assert.deepEqual(paths, ['/v1/responses', '/v1/chat/completions', '/v1/messages', '/v1/messages']);
+  assert.deepEqual(paths, ['/v1/responses', '/v1/chat/completions', '/v1/messages', '/v1/messages', '/v1/messages', '/v1/messages']);
 } finally { clearTimeout(timer); server.closeAllConnections(); server.close(); }

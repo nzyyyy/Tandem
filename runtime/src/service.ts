@@ -1,16 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { ConfigStore, bindModel, redact } from './config.ts';
 import type { AppConfig, ModelSelection } from './config.ts';
+import { ContextService } from './context.ts';
 import { Store } from './store.ts';
 import { AppError, record, requireValue, text } from './errors.ts';
 import { generate } from './model.ts';
-import type { BoundModel, ChatMessage } from './model.ts';
+import type { BoundModel } from './model.ts';
 
 const fingerprint = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 export class AppService {
   readonly config: ConfigStore;
   readonly store: Store;
+  readonly context: ContextService;
   private stopped = false;
   private active = new Map<string, { sessionId: string; abort: AbortController }>();
   private jobs = new Set<Promise<void>>();
@@ -20,6 +22,12 @@ export class AppService {
   constructor(directory: string) {
     this.config = new ConfigStore(directory); this.store = new Store(directory);
     try { this.reloadConfiguration(); } catch { /* Show the repair state without replacing the file. */ }
+    this.context = new ContextService(this.store, () => this.currentConfig(), (...args) => this.createRun(...args), id => {
+      this.store.db.prepare("UPDATE runs SET status='cancelled',error_code='CANCELLED' WHERE id=? AND status IN('queued','running')").run(id);
+      const run = this.store.db.prepare('SELECT assistant_message_id FROM runs WHERE id=?').get(id);
+      if (run) this.store.changed(String(run.assistant_message_id));
+      this.active.get(id)?.abort.abort();
+    });
   }
 
   private reloadConfiguration() {
@@ -52,10 +60,10 @@ export class AppService {
       const config = this.configuration?.config ?? { modelConnections: [], defaultModel: null };
       const messages = this.store.timeline();
       const changes = this.store.changes(payload.afterSequence);
-      return { focus: this.store.focus(surfaceId), configError: this.configError,
+      return { projects: this.context.projects(), pendingInteractions: this.context.pending(surfaceId), focus: this.store.focus(surfaceId), configError: this.configError,
         models: config.modelConnections.flatMap(item => item.modelNames.map(modelName => ({ connectionId: item.id, modelName, apiType: item.apiType }))),
         defaultModel: config.defaultModel, messages, changedMessages: changes.messages, cursor: changes.cursor, hasMore: messages.length === 10,
-        sessions: this.store.db.prepare('SELECT id,title,temporary,updated_at AS updatedAt FROM sessions ORDER BY updated_at DESC,rowid DESC LIMIT 100').all() };
+        sessions: this.context.sessions(surfaceId) };
     }
     if (method === 'timeline.list') {
       requireValue(Number.isSafeInteger(payload.beforeSequence) && payload.beforeSequence > 0);
@@ -64,14 +72,10 @@ export class AppService {
     if (method === 'session.focus') {
       const surfaceId = text(payload.surfaceId);
       const sessionId = text(payload.sessionId);
-      return this.store.transaction(() => {
-        requireValue(this.store.db.prepare('SELECT id FROM sessions WHERE id=?').get(sessionId), 'SESSION_NOT_FOUND');
-        const focus = this.store.focus(surfaceId);
-        requireValue(focus.version === payload.expectedVersion, 'FOCUS_CONFLICT');
-        this.store.db.prepare('UPDATE focus_states SET active_session_id=?, interrupted_session_id=NULL,version=version+1 WHERE surface_id=?').run(sessionId, surfaceId);
-        return this.store.focus(surfaceId);
-      });
+      return this.context.focus(surfaceId, sessionId, payload.expectedVersion);
     }
+    const contextResult = this.context.dispatch(method, payload);
+    if (contextResult !== undefined) { this.kick(); return contextResult; }
     if (method === 'message.send') return this.send(payload);
     if (method === 'message.retry') return this.retry(payload);
     if (method === 'message.cancel') {
@@ -91,39 +95,9 @@ export class AppService {
   }
 
   private send(payload: Record<string, any>) {
-    const key = text(payload.idempotencyKey);
-    const input = { surfaceId: text(payload.surfaceId), text: text(payload.text, 8000),
-      newTopic: payload.newTopic === true, temporary: payload.temporary === true, selection: this.selection(payload.selection) };
-    const hash = fingerprint(input);
-    const previous = this.store.db.prepare('SELECT id,request_hash FROM runs WHERE request_key=?').get(key);
-    if (previous) { requireValue(previous.request_hash === hash, 'IDEMPOTENCY_CONFLICT'); return { runId: previous.id }; }
-    const config = this.currentConfig();
-    const model = bindModel(config, input.selection);
-    const binding: BoundModel = { id: model.id, protocol: model.protocol, apiType: model.apiType, url: model.url, modelName: model.modelName };
-    const runId = this.store.transaction(() => {
-      const focus = this.store.focus(input.surfaceId);
-      let sessionId = focus.activeSessionId as string | null;
-      const temporary = input.temporary || /^(顺便问|顺便，|插一句|临时问|换个话题)/.test(input.text);
-      // shortcut: M1 uses explicit controls and conservative phrases; semantic routing belongs to M2.
-      if (/^(继续上次|回到刚才|继续原来的话题)/.test(input.text) && focus.interruptedSessionId && !input.newTopic && !temporary) {
-        sessionId = String(focus.interruptedSessionId);
-        this.store.db.prepare('UPDATE focus_states SET interrupted_session_id=NULL WHERE surface_id=?').run(input.surfaceId);
-      } else if (!sessionId || input.newTopic || temporary) {
-        const old = sessionId;
-        sessionId = this.store.newSession(redact(input.text, config), temporary);
-        if (temporary && old && !focus.interruptedSessionId) this.store.db.prepare('UPDATE focus_states SET interrupted_session_id=? WHERE surface_id=?').run(old, input.surfaceId);
-        if (!temporary) this.store.db.prepare('UPDATE focus_states SET interrupted_session_id=NULL WHERE surface_id=?').run(input.surfaceId);
-      }
-      this.store.db.prepare('UPDATE focus_states SET active_session_id=?,version=version+1 WHERE surface_id=?').run(sessionId, input.surfaceId);
-      const messageId = randomUUID();
-      this.store.db.prepare("INSERT INTO messages(id,session_id,sequence,role,content,created_at) VALUES(?,?,?,'user',?,?)")
-        .run(messageId, sessionId, this.store.sequence(), redact(input.text, config), Date.now());
-      this.store.changed(messageId);
-      this.store.db.prepare('UPDATE sessions SET updated_at=? WHERE id=?').run(Date.now(), sessionId);
-      return this.createRun(messageId, String(sessionId), binding, key, hash, null, 1);
-    });
+    const result = this.context.receive(payload);
     this.kick();
-    return { runId };
+    return result;
   }
 
   private createRun(messageId: string, sessionId: string, binding: BoundModel, key: string, hash: string, retryOf: string | null, attempt: number): string {
@@ -134,27 +108,38 @@ export class AppService {
     this.store.db.prepare("INSERT INTO messages(id,session_id,sequence,role,content,run_id,created_at) VALUES(?,?,?,'assistant','',?,?)")
       .run(assistantId, sessionId, this.store.sequence(), id, Date.now());
     this.store.db.prepare('UPDATE runs SET assistant_message_id=? WHERE id=?').run(assistantId, id);
+    const interaction = this.store.db.prepare('SELECT * FROM interactions WHERE message_id=?').get(messageId);
+    if (interaction) this.store.db.prepare('UPDATE runs SET interaction_id=?,interaction_version=?,project_id=? WHERE id=?').run(interaction.id,interaction.version,interaction.project_id,id);
     this.store.changed(assistantId);
     return id;
   }
 
-  private retry(payload: Record<string, any>) {
-    const originalId = text(payload.runId);
+  private retry(payload: Record<string, any>): { runId: unknown } {
+    let originalId = text(payload.runId);
     const key = text(payload.idempotencyKey);
     const selected = this.selection(payload.selection);
     const hash = fingerprint({ originalId, selected });
     const previous = this.store.db.prepare('SELECT id,request_hash FROM runs WHERE request_key=?').get(key);
     if (previous) { requireValue(previous.request_hash === hash, 'IDEMPOTENCY_CONFLICT'); return { runId: previous.id }; }
-    const duplicate = this.store.db.prepare('SELECT id FROM runs WHERE retry_of=?').get(originalId);
-    if (duplicate) return { runId: duplicate.id };
+    while (true) {
+      const duplicate = this.store.db.prepare('SELECT r.id,r.interaction_version,i.version FROM runs r JOIN interactions i ON i.id=r.interaction_id WHERE r.retry_of=?').get(originalId);
+      if (!duplicate) break;
+      if (duplicate.interaction_version === duplicate.version) return { runId: duplicate.id };
+      originalId = String(duplicate.id);
+    }
     const old = this.store.db.prepare('SELECT * FROM runs WHERE id=?').get(originalId);
-    requireValue(old && ['failed', 'interrupted', 'cancelled'].includes(String(old.status)), 'RETRY_UNAVAILABLE');
+    const interaction = old && this.store.db.prepare('SELECT version FROM interactions WHERE id=?').get(old.interaction_id);
+    requireValue(old && (['failed', 'interrupted', 'cancelled'].includes(String(old.status)) || interaction?.version !== old.interaction_version), 'RETRY_UNAVAILABLE');
     const oldBinding = JSON.parse(String(old.binding_json)) as BoundModel;
     const config = this.currentConfig();
     const model = bindModel(config, selected ?? { connectionId: oldBinding.id, modelName: oldBinding.modelName });
     requireValue(selected || (model.url === oldBinding.url && model.apiType === oldBinding.apiType && model.protocol === oldBinding.protocol), 'MODEL_BINDING_CHANGED');
     const binding: BoundModel = { id: model.id, protocol: model.protocol, apiType: model.apiType, url: model.url, modelName: model.modelName };
-    const runId = this.store.transaction(() => this.createRun(String(old.user_message_id), String(old.session_id), binding, key, hash, originalId, Number(old.attempt) + 1));
+    const runId = this.store.transaction(() => {
+      const id = this.createRun(String(old.user_message_id), String(old.session_id), binding, key, hash, originalId, Number(old.attempt) + 1);
+      this.context.prepareRetry(old,id);
+      return id;
+    });
     this.kick();
     return { runId };
   }
@@ -163,7 +148,7 @@ export class AppService {
     queueMicrotask(() => {
       if (this.stopped) return;
       const sessions = new Set([...this.active.values()].map(item => item.sessionId));
-      for (const run of this.store.db.prepare("SELECT * FROM runs WHERE status='queued' ORDER BY created_at,rowid").all()) {
+      for (const run of this.store.db.prepare("SELECT r.* FROM runs r JOIN messages m ON m.id=r.user_message_id WHERE r.status='queued' ORDER BY m.sequence,r.attempt,r.rowid").all()) {
         if (this.active.size >= 2) break;
         const sessionId = String(run.session_id);
         if (sessions.has(sessionId)) continue;
@@ -182,24 +167,14 @@ export class AppService {
       const binding = JSON.parse(String(run.binding_json)) as BoundModel;
       const model = bindModel(config, { connectionId: binding.id, modelName: binding.modelName });
       requireValue(model.url === binding.url && model.apiType === binding.apiType && model.protocol === binding.protocol, 'MODEL_BINDING_CHANGED');
-      const cutoff = this.store.db.prepare('SELECT sequence FROM messages WHERE id=?').get(run.user_message_id)!.sequence;
-      const rows = this.store.db.prepare(`SELECT m.role,m.content FROM messages m LEFT JOIN runs r ON r.id=m.run_id
-        LEFT JOIN messages origin ON origin.id=r.user_message_id
-        WHERE m.session_id=? AND ((m.role='user' AND m.sequence<=?) OR
-          (m.role='assistant' AND r.status='completed' AND origin.sequence<? AND r.attempt=(SELECT MAX(r2.attempt) FROM runs r2 WHERE r2.user_message_id=r.user_message_id AND r2.status='completed')))
-        ORDER BY COALESCE(origin.sequence,m.sequence),CASE m.role WHEN 'user' THEN 0 ELSE 1 END`).all(run.session_id, cutoff, cutoff);
-      const messages = rows.slice(-40).map(row => ({ role: row.role, content: redact(String(row.content), config) })) as ChatMessage[];
-      requireValue(messages.length > 0 && messages[0].role === 'user', 'CONTEXT_TOO_LARGE');
-      requireValue(Buffer.byteLength(JSON.stringify(messages)) <= 128 * 1024, 'CONTEXT_TOO_LARGE');
-      this.store.db.prepare('UPDATE runs SET context_json=? WHERE id=?').run(JSON.stringify(messages), run.id);
-      this.store.runStatus(String(run.id), 'running');
+      const messages = this.context.snapshot(run, config);
       const result = await generate(model, messages, abort.signal, output => {
-        if (!this.stopped && !abort.signal.aborted) this.store.transaction(() => {
+        if (!this.stopped && !abort.signal.aborted && this.context.valid(run)) this.store.transaction(() => {
           this.store.db.prepare('UPDATE messages SET content=? WHERE id=?').run(redact(output, config), run.assistant_message_id);
           this.store.changed(String(run.assistant_message_id));
         });
       });
-      requireValue(!this.stopped && !abort.signal.aborted, 'CANCELLED');
+      requireValue(!this.stopped && !abort.signal.aborted && this.context.valid(run), 'CANCELLED');
       requireValue(result.toolCalls.length === 0, 'TOOLS_UNAVAILABLE');
       this.store.runStatus(String(run.id), 'completed');
     } catch (error) {

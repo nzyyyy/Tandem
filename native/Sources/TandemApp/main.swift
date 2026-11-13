@@ -163,12 +163,36 @@ func smokeTest() async {
         let recovered = try JSONDecoder().decode(AssistantSnapshot.self, from: JSONSerialization.data(withJSONObject: restoredState))
         guard recovered.messages.count == 8, recovered.messages.last?.status == "interrupted",
               recovered.messages.last?.content == "partial" else { throw IPCError.response }
+        await assistant.setContext(mode: "isolated", projectId: "")
+        assistant.draft = "M2 scoped question"
+        await assistant.send()
+        try await waitFor { assistant.snapshot?.pendingInteractions.count == 1 }
+        guard let pending = assistant.snapshot?.pendingInteractions.first else { throw IPCError.response }
+        let created = try await runtime.request("project.create", payload: ["title": "M2 project", "description": ""])
+        guard let projectId = created["id"] as? String else { throw IPCError.response }
+        await assistant.setContext(mode: "isolated", projectId: projectId)
+        await assistant.confirm(pending, sessionId: nil)
+        try await waitFor { assistant.messages.filter { $0.status == "completed" }.count == 4 }
+        guard let scoped = assistant.messages.last, let snapshotId = scoped.snapshotId else { throw IPCError.response }
+        let actual = try await assistant.context(snapshotId)
+        guard actual.mode == "isolated", actual.projectId == projectId, actual.fragments.count == 1,
+              actual.fragments.first?.content == "M2 scoped question" else { throw IPCError.response }
+        let target = try await runtime.request("project.create", payload: ["title": "M2 target", "description": ""])
+        guard let targetId = target["id"] as? String else { throw IPCError.response }
+        await assistant.setContext(mode: "automatic", projectId: targetId)
+        await assistant.correct(scoped, projectId: targetId)
+        guard let oldRun = scoped.runId else { throw IPCError.response }
+        await assistant.retry(oldRun)
+        try await waitFor { assistant.messages.filter { $0.status == "completed" }.count == 5 }
+        guard assistant.messages.last?.executionProjectId == targetId else { throw IPCError.response }
+        let unchanged = try await assistant.context(snapshotId)
+        guard unchanged.projectId == projectId, unchanged.fragments.first?.content == "M2 scoped question" else { throw IPCError.response }
         polling.cancel()
         await runtime.stop()
         try await Task.sleep(for: .seconds(2))
         guard runtime.nodePID == 0, kill(lastPID, 0) == -1, errno == ESRCH else { throw IPCError.peer }
         try? FileManager.default.removeItem(at: dataDirectory)
-        print("PASS Swift → Node: three-API AssistantModel chat, config/history persistence, reconnect, crash restart, quit cleanup")
+        print("PASS Swift → Node: three-API chat, M2 pending route, isolated snapshot, correction/reprocess, persistence, reconnect, crash restart, quit cleanup")
         exit(0)
     } catch {
         await runtime.stop()

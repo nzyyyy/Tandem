@@ -6,6 +6,7 @@ struct AssistantView: View {
     @SceneStorage("tandem.surfaceId") private var surfaceId = UUID().uuidString
     @State private var section = "assistant"
     @State private var showDiagnostics = false
+    @State private var filterProject = "*"
 
     init(runtime: RuntimeSupervisor) { _model = StateObject(wrappedValue: AssistantModel(runtime: runtime)) }
 
@@ -14,6 +15,7 @@ struct AssistantView: View {
             List {
                 Section {
                     Button { section = "assistant" } label: { Label("Assistant", systemImage: "bubble.left.and.bubble.right") }
+                    Button { section = "projects" } label: { Label("项目", systemImage: "folder") }
                     Button { section = "settings" } label: { Label("模型设置", systemImage: "slider.horizontal.3") }
                 }
                 Section("最近话题") {
@@ -43,6 +45,7 @@ struct AssistantView: View {
             .navigationSplitViewColumnWidth(min: 200, ideal: 240)
         } detail: {
             if section == "settings" { ModelSettingsView(model: model) }
+            else if section == "projects" { ProjectView(model: model) }
             else { conversation }
         }
         .frame(minWidth: 860, minHeight: 600)
@@ -63,6 +66,11 @@ struct AssistantView: View {
                     Text(activeTitle).font(.callout).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
+                Picker("历史筛选", selection: $filterProject) {
+                    Text("全部项目历史").tag("*")
+                    Text("未关联项目").tag("")
+                    ForEach(model.snapshot?.projects ?? []) { Text($0.title + ($0.status == "archived" ? "（归档）" : "")).tag($0.id) }
+                }.frame(maxWidth: 210)
                 if let interrupted = model.snapshot?.focus.interruptedSessionId {
                     Button("恢复原话题") { Task { await model.focus(interrupted) } }
                 }
@@ -84,7 +92,13 @@ struct AssistantView: View {
                             }
                             .padding(.top, 72)
                         }
-                        ForEach(model.messages) { message in MessageView(message: message, model: model) }
+                        ForEach(timelineSequences, id: \.self) { sequence in
+                            if let message = model.messages.first(where: { $0.sequence == sequence }) {
+                                MessageView(message: message, model: model)
+                            } else if let pending = model.snapshot?.pendingInteractions.first(where: { $0.sequence == sequence }) {
+                                PendingInteractionView(interaction: pending, model: model)
+                            }
+                        }
                         Color.clear.frame(height: 1).id("bottom")
                     }
                     .padding(24)
@@ -99,6 +113,7 @@ struct AssistantView: View {
                 if let error = model.snapshot?.configError {
                     Button(userFacingError(error) + " 打开模型设置") { section = "settings" }.foregroundStyle(.red)
                 }
+                ContextControls(model: model)
                 HStack {
                     Picker("模型", selection: $model.selectedModel) {
                         Text(defaultModelTitle).tag("")
@@ -136,6 +151,9 @@ struct AssistantView: View {
         }
     }
 
+    private var timelineSequences: [Int] {
+        Array(Set(model.messages.filter { filterProject == "*" || ($0.projectId ?? "") == filterProject }.map(\.sequence) + (filterProject == "*" ? (model.snapshot?.pendingInteractions.map(\.sequence) ?? []) : []))).sorted()
+    }
     private var activeTitle: String {
         model.snapshot?.sessions.first { $0.id == model.snapshot?.focus.activeSessionId }?.title ?? "准备开始新话题"
     }
@@ -148,6 +166,8 @@ struct AssistantView: View {
 private struct MessageView: View {
     let message: TimelineMessage
     @ObservedObject var model: AssistantModel
+    @State private var showContext = false
+    @State private var history: CorrectionHistory?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -159,6 +179,34 @@ private struct MessageView: View {
                 Spacer()
                 Text(model.snapshot?.sessions.first { $0.id == message.sessionId }?.title ?? "历史话题")
                     .font(.caption).foregroundStyle(.tertiary).lineLimit(1).frame(maxWidth: 180, alignment: .trailing)
+            }
+            HStack {
+                Text(model.projectTitle(message.projectId)).font(.caption).foregroundStyle(.secondary)
+                if message.interactionId != nil {
+                    Menu("纠正项目归属") {
+                        Button("未关联项目") { Task { await model.correct(message, projectId: "") } }
+                        ForEach((model.snapshot?.projects ?? []).filter { $0.status == "open" }) { project in
+                            Button(project.title) { Task { await model.correct(message, projectId: project.id) } }
+                        }
+                    }.menuStyle(.borderlessButton).fixedSize()
+                    Button("纠正记录") {
+                        Task { history = try? await model.call("interaction.history", payload: ["interactionId": message.interactionId!], as: CorrectionHistory.self) }
+                    }.buttonStyle(.borderless)
+                }
+                if message.snapshotId != nil { Button("查看执行上下文") { showContext = true }.buttonStyle(.borderless) }
+            }
+            if message.role == "user", let reason = message.routeReason { Text("话题选择：" + reason).font(.caption).foregroundStyle(.secondary) }
+            if let history {
+                if history.corrections.isEmpty { Text("尚无归属纠正记录").font(.caption).foregroundStyle(.secondary) }
+                ForEach(history.corrections) { record in
+                    Text("\(model.projectTitle(record.from_project)) → \(model.projectTitle(record.to_project)) · \(Date(timeIntervalSince1970: record.created_at / 1000).formatted())")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if message.role == "assistant", message.executionInteractionVersion != message.interactionVersion {
+                Text("原回答使用：\(model.projectTitle(message.executionProjectId))。更改归属不会改写历史上下文。")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let id = message.runId { Button("按当前归属重新处理") { Task { await model.retry(id) } }.disabled(model.sending) }
             }
             if !message.content.isEmpty {
                 Text(message.content).textSelection(.enabled).lineSpacing(5).frame(maxWidth: .infinity, alignment: .leading)
@@ -181,6 +229,7 @@ private struct MessageView: View {
                 }
             }
         }
+        .sheet(isPresented: $showContext) { if let id = message.snapshotId { RunContextView(id: id, model: model) } }
         .padding(message.role == "user" ? 14 : 0)
         .background(message.role == "user" ? Color.primary.opacity(0.045) : .clear, in: RoundedRectangle(cornerRadius: 10))
     }

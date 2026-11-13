@@ -40,8 +40,11 @@ public struct TopicSession: Codable, Equatable, Identifiable {
     public var title: String
     public var temporary: Int
     public var updatedAt: Double
+    public var projectId: String?
 }
 public struct FocusState: Codable, Equatable {
+    public var activeProjectId: String?
+    public var contextMode: String
     public var activeSessionId: String?
     public var interruptedSessionId: String?
     public var version: Int
@@ -58,8 +61,17 @@ public struct TimelineMessage: Codable, Equatable, Identifiable {
     public var modelName: String?
     public var connectionId: String?
     public var attempt: Int?
+    public var routeReason: String?
+    public var interactionId: String?
+    public var interactionVersion: Int?
+    public var projectId: String?
+    public var executionInteractionVersion: Int?
+    public var executionProjectId: String?
+    public var snapshotId: String?
 }
 public struct AssistantSnapshot: Codable, Equatable {
+    public var projects: [TandemProject]
+    public var pendingInteractions: [PendingInteraction]
     public var focus: FocusState
     public var models: [ModelOption]
     public var defaultModel: ModelSelection?
@@ -71,8 +83,78 @@ public struct AssistantSnapshot: Codable, Equatable {
     public var hasMore: Bool
 }
 
+public struct TandemProject: Codable, Equatable, Identifiable {
+    public var id: String
+    public var title: String
+    public var description: String
+    public var status: String
+    public var version: Int
+}
+public struct RouteCandidate: Codable, Equatable, Identifiable {
+    public var sessionId: String
+    public var projectId: String?
+    public var title: String
+    public var reason: String
+    public var updatedAt: Double
+    public var id: String { sessionId }
+}
+public struct RouteExplanation: Codable, Equatable {
+    public var action: String
+    public var reason: String
+    public var candidates: [RouteCandidate]
+}
+public struct PendingInteraction: Codable, Equatable, Identifiable {
+    public var id: String
+    public var sequence: Int
+    public var input: String
+    public var version: Int
+    public var route: RouteExplanation
+}
+public struct ContextFragment: Codable {
+    public var sourceType: String
+    public var sourceId: String
+    public var sourceVersion: String
+    public var projectId: String?
+    public var role: String
+    public var content: String
+    public var deleted: Bool?
+}
+public struct RunContext: Codable {
+    public var id: String
+    public var mode: String
+    public var projectId: String?
+    public var fragments: [ContextFragment]
+}
+public struct DeletionItem: Codable { public var id: String }
+public struct ProjectDeletion: Codable {
+    public var token: String
+    public var title: String
+    public var interactions: [DeletionItem]
+    public var messages: [DeletionItem]
+    public var runs: [DeletionItem]
+    public var sharedSnapshots: [String]
+    public var derivedMessages: [String]
+}
+public struct CorrectionRecord: Codable, Identifiable {
+    public var id: String
+    public var from_project: String?
+    public var to_project: String?
+    public var version: Int
+    public var created_at: Double
+}
+public struct CorrectionHistory: Codable { public var corrections: [CorrectionRecord] }
+
 public func userFacingError(_ code: String) -> String {
     let messages = [
+        "PROJECT_LIMIT": "当前验证版本最多保留 200 个项目。请先整理已有项目。",
+        "PROJECT_REQUIRED": "请先选择项目，再确认这条输入。",
+        "PROJECT_UNAVAILABLE": "项目已归档或不可用，请恢复项目或重新选择。",
+        "PROJECT_CONFLICT": "项目已被修改，请重新加载后重试。",
+        "CONTEXT_SCOPE": "目标超出当前上下文范围，请明确切换项目或模式。",
+        "INTERACTION_CONFLICT": "此交互已更新，请重新确认。",
+        "INTERACTION_CHANGED": "交互归属已更正，请手动重新处理。",
+        "DELETE_PREVIEW_CHANGED": "受影响内容已变化，请重新预览删除范围。",
+        "DELETE_PREVIEW_EXPIRED": "删除预览已过期，请重新预览。",
         "MODEL_REQUIRED": "请先在设置中配置默认模型，或手动选择一个模型。",
         "MODEL_UNAVAILABLE": "所选模型已失效，请检查接入项和模型名。",
         "MODEL_KEY_REQUIRED": "请在设置中填写此接入项的 API Key。",
@@ -228,6 +310,42 @@ public final class AssistantModel: ObservableObject {
             error = nil
             await refresh()
         } catch { show(error) }
+    }
+
+    public func perform(_ method: String, _ payload: [String: Any]) async -> Bool {
+        do {
+            _ = try await runtime.request(method, payload: payload)
+            error = nil
+            await refresh()
+            return true
+        } catch { show(error); return false }
+    }
+
+    public func setContext(mode: String, projectId: String) async {
+        guard let version = snapshot?.focus.version else { return }
+        _ = await perform("context.set", ["surfaceId": surfaceId, "mode": mode,
+            "projectId": projectId.isEmpty ? NSNull() : projectId as Any, "expectedVersion": version])
+    }
+
+    public func confirm(_ interaction: PendingInteraction, sessionId: String?) async {
+        guard let version = snapshot?.focus.version else { return }
+        _ = await perform("interaction.confirm", ["surfaceId": surfaceId, "interactionId": interaction.id,
+            "expectedVersion": interaction.version, "expectedFocusVersion": version, "sessionId": sessionId as Any? ?? NSNull()])
+    }
+
+    public func correct(_ message: TimelineMessage, projectId: String) async {
+        guard let id = message.interactionId, let version = message.interactionVersion else { return }
+        _ = await perform("interaction.correct", ["surfaceId": surfaceId, "interactionId": id, "expectedVersion": version,
+            "projectId": projectId.isEmpty ? NSNull() : projectId as Any])
+    }
+
+    public func context(_ id: String) async throws -> RunContext {
+        try await call("snapshot.get", payload: ["id": id, "surfaceId": surfaceId], as: RunContext.self)
+    }
+
+    public func projectTitle(_ id: String?) -> String {
+        guard let id else { return "未关联项目" }
+        return snapshot?.projects.first { $0.id == id }?.title ?? "历史项目"
     }
 
     public func cancel(_ runId: String) async {
