@@ -179,29 +179,48 @@ struct ContextControls: View {
     @State private var mode = "automatic"
     @State private var projectId = ""
     @State private var applying = false
+    @State private var expanded = false
     private var changed: Bool {
         guard let focus = model.snapshot?.focus else { return false }
         return mode != focus.contextMode || projectId != (focus.activeProjectId ?? "")
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { modePicker; projectPicker; applyButton }
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 12) { modePicker; projectPicker }
+        Button { expanded.toggle() } label: {
+            Label(summary, systemImage: model.snapshot?.focus.contextMode == "isolated" ? "lock.shield" : "slider.horizontal.3")
+                .font(.caption).lineLimit(1)
+                .foregroundStyle(model.snapshot?.focus.contextMode == "isolated" ? TandemStyle.accent : TandemStyle.secondary)
+        }
+        .buttonStyle(TandemButtonStyle(.plain))
+        .help(summary + " · 点击设置上下文范围").accessibilityLabel("上下文范围：" + summary)
+        .disabled(model.snapshot == nil)
+        .popover(isPresented: $expanded, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("上下文范围").font(.headline)
+                modePicker
+                projectPicker
+                Text(mode == "isolated" ? "仅使用所选项目的来源，不加载全局记忆。" : "选择本次讨论的项目范围。更改后点击应用。")
+                    .font(.caption).foregroundStyle(TandemStyle.secondary)
+                if let error = model.error { Text(error).font(.caption).foregroundStyle(.red) }
+                HStack {
+                    Spacer()
+                    Button("关闭") { expanded = false }.disabled(applying)
                     applyButton
                 }
-            }
-            if let focus = model.snapshot?.focus, changed || focus.contextMode != "automatic" {
-                Text("生效范围：\(modeTitle(model.snapshot?.focus.contextMode ?? "automatic")) · \(model.projectTitle(model.snapshot?.focus.activeProjectId))" + (model.snapshot?.focus.contextMode == "isolated" ? " · 仅使用此项目的来源" : ""))
-                    .font(.caption).foregroundStyle(TandemStyle.secondary)
-            }
+            }.padding(20).frame(width: 340).background(TandemStyle.canvas).foregroundStyle(TandemStyle.ink)
+                .disabled(applying)
         }
-        .disabled(model.snapshot == nil || applying)
-        .onChange(of: model.snapshot?.focus.version, initial: true) { _, _ in
-            mode = model.snapshot?.focus.contextMode ?? "automatic"
-            projectId = model.snapshot?.focus.activeProjectId ?? ""
-        }
+        .onChange(of: expanded) { _, open in if open { loadFocus() } }
+        .onChange(of: model.snapshot?.focus.version, initial: true) { _, _ in loadFocus() }
+    }
+    private var summary: String {
+        let focus = model.snapshot?.focus
+        let currentMode = focus?.contextMode ?? "automatic"
+        let project = focus?.activeProjectId.map { model.projectTitle($0) } ?? (currentMode == "automatic" ? "未指定项目" : "请选择项目")
+        return modeTitle(currentMode) + " · " + project
+    }
+    private func loadFocus() {
+        mode = model.snapshot?.focus.contextMode ?? "automatic"
+        projectId = model.snapshot?.focus.activeProjectId ?? ""
     }
     private func modeTitle(_ mode: String) -> String {
         switch mode { case "pinned": return "固定项目"; case "isolated": return "隔离项目"; default: return "自动" }
@@ -212,19 +231,25 @@ struct ContextControls: View {
             Text("固定项目").tag("pinned")
             Text("隔离项目").tag("isolated")
         }
-        .frame(maxWidth: 210)
+        .frame(maxWidth: .infinity)
     }
     private var projectPicker: some View {
         TandemPicker(title: "项目", value: "项目：" + (projectId.isEmpty ? "未指定项目" : model.projectTitle(projectId)), selection: $projectId) {
             Text("未指定项目").tag("")
             ForEach((model.snapshot?.projects ?? []).filter { $0.status == "open" }) { Text($0.title).tag($0.id) }
         }
-        .frame(maxWidth: 280)
+        .frame(maxWidth: .infinity)
     }
     @ViewBuilder private var applyButton: some View {
         if changed {
             Button(applying ? "应用中…" : "应用范围") {
-                Task { applying = true; await model.setContext(mode: mode, projectId: projectId); applying = false }
+                Task {
+                    let selectedMode = mode, selectedProject = projectId
+                    applying = true
+                    await model.setContext(mode: selectedMode, projectId: selectedProject)
+                    applying = false
+                    if model.snapshot?.focus.contextMode == selectedMode && (model.snapshot?.focus.activeProjectId ?? "") == selectedProject { expanded = false }
+                }
             }.buttonStyle(TandemButtonStyle(.primary)).fixedSize()
         }
     }
@@ -270,16 +295,7 @@ struct RunContextView: View {
             if let context {
                 Text("\(model.projectTitle(context.projectId)) · \(context.mode)").foregroundStyle(.secondary)
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        ForEach(context.fragments.indices, id: \.self) { index in
-                            let fragment = context.fragments[index]
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("\(fragment.role == "user" ? "用户输入" : "回答") · \(model.projectTitle(fragment.projectId))").font(.headline)
-                                Text(fragment.content).textSelection(.enabled)
-                                Text("来源 \(fragment.sourceId)\n版本 \(fragment.sourceVersion)").font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-                            }
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    ContextFragmentsView(context: context, model: model)
                 }
             } else if let error { Text(error).foregroundStyle(.red) }
             else { ProgressView() }
@@ -289,5 +305,25 @@ struct RunContextView: View {
             do { context = try await model.context(id) }
             catch { self.error = "当前范围无法查看此快照，请先明确切换项目或模式。" }
         }
+    }
+}
+
+struct ContextFragmentsView: View {
+    let context: RunContext
+    @ObservedObject var model: AssistantModel
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ForEach(context.fragments.indices, id: \.self) { index in
+                let fragment = context.fragments[index]
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(fragment.sourceType == "memory" ? "长期记忆" : fragment.role == "user" ? "用户输入" : fragment.role == "tool" ? "工具结果" : "回答")
+                        .font(.subheadline.weight(.semibold))
+                    Text(model.projectTitle(fragment.projectId)).font(.caption).foregroundStyle(TandemStyle.secondary)
+                    Text(fragment.content).font(.callout).textSelection(.enabled)
+                    Text("来源 \(fragment.sourceId)\n版本 \(fragment.sourceVersion)")
+                        .font(.caption.monospaced()).foregroundStyle(TandemStyle.secondary).textSelection(.enabled)
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }

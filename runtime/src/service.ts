@@ -6,6 +6,7 @@ import { Store } from './store.ts';
 import { AppError, record, requireValue, text } from './errors.ts';
 import { Execution, toolDefinitions } from './execution.ts';
 import { generate } from './model.ts';
+import { runWithPi } from './pi.ts';
 import type { BoundModel, ChatMessage } from './model.ts';
 import { memoryScopeAllowed } from './memory.ts';
 
@@ -218,55 +219,57 @@ export class AppService {
         }
         this.execution.save(run,checkpoint.messages,checkpoint.fragments);
       }
-      while (!this.stopped && !abort.signal.aborted) {
-        this.execution.valid(run);
-        const lastAssistant = checkpoint.messages.findLast(m=>m.role==='assistant' && m.toolCalls?.length);
-        const pending = lastAssistant?.toolCalls?.filter(c=>!checkpoint.messages.some(m=>m.role==='tool' && m.callId===c.callId)) ?? [];
-        if (pending.length) {
-          for (const call of pending) {
-            const result = await this.execution.tool(run,call,abort.signal);
-            if (result === null) return;
-            checkpoint.messages.push({role:'tool',callId:call.callId,content:JSON.stringify(result)});
-            checkpoint.fragments.push({sourceType:'tool',grantId:result.grantId ?? null,sourceId:call.callId,sourceVersion:fingerprint(result),projectId:run.project_id,role:'tool',content:JSON.stringify(result)});
-            this.execution.save(run,checkpoint.messages,checkpoint.fragments);
-            if (call.name === 'complete_task' && result.completed) { this.store.runStatus(String(run.id),'completed'); return; }
+      await runWithPi({ model: binding, messages: checkpoint.messages, tools: toolDefinitions, signal: abort.signal,
+        execute: async call => {
+          requireValue(!this.stopped && !abort.signal.aborted, 'CANCELLED');
+          const result = await this.execution.tool(run,call,abort.signal);
+          if (result === null) return null;
+          checkpoint.messages.push({role:'tool',callId:call.callId,content:JSON.stringify(result)});
+          checkpoint.fragments.push({sourceType:'tool',grantId:result.grantId ?? null,sourceId:call.callId,sourceVersion:fingerprint(result),projectId:run.project_id,role:'tool',content:JSON.stringify(result)});
+          this.execution.save(run,checkpoint.messages,checkpoint.fragments);
+          if (call.name === 'complete_task' && result.completed) this.store.runStatus(String(run.id),'completed');
+          return result;
+        },
+        request: async onText => {
+          this.execution.valid(run);
+          const p = this.execution.progress(String(run.id));
+          const inputTokens = Buffer.byteLength(JSON.stringify(checkpoint.messages));
+          const maxTokens = Math.min(4096,Number(p.token_limit)-Number(p.tokens)-inputTokens);
+          if (maxTokens <= 0) { this.execution.reserve(run,Number(p.token_limit)+1); }
+          this.execution.reserve(run,inputTokens+maxTokens);
+          const snapshotId = this.execution.save(run,checkpoint.messages,checkpoint.fragments);
+          const step = this.execution.step(run,'model','running',{modelName:binding.modelName},snapshotId);
+          const start = Date.now(); let result;
+          const remainingMs = Math.max(1,Number(p.time_limit)-Number(p.active_ms));
+          const timer = setTimeout(()=>abort.abort('budget_exhausted'),remainingMs);
+          let partial = '';
+          try {
+            result = await generate(model, checkpoint.messages, abort.signal, output => {
+              partial = output;
+              onText(redact(output,config));
+              if (!this.stopped && !abort.signal.aborted && this.context.valid(run)) this.store.transaction(() => {
+                this.store.db.prepare('UPDATE messages SET content=? WHERE id=?').run(redact(output,config),run.assistant_message_id);
+                this.store.changed(String(run.assistant_message_id));
+              });
+            },true,Math.min(90000,remainingMs),toolDefinitions,maxTokens);
+          } finally {
+            clearTimeout(timer);
+            this.execution.charge(String(run.id),Date.now()-start,result?.usage != null ? result.usage-inputTokens-maxTokens : Buffer.byteLength(JSON.stringify(result ?? partial))-maxTokens,result?.usage == null);
           }
-        }
-        const p = this.execution.progress(String(run.id));
-        const inputTokens = Buffer.byteLength(JSON.stringify(checkpoint.messages));
-        const maxTokens = Math.min(4096,Number(p.token_limit)-Number(p.tokens)-inputTokens);
-        if (maxTokens <= 0) { this.execution.reserve(run,Number(p.token_limit)+1); }
-        this.execution.reserve(run,inputTokens+maxTokens);
-        const snapshotId = this.execution.save(run,checkpoint.messages,checkpoint.fragments);
-        const step = this.execution.step(run,'model','running',{modelName:binding.modelName},snapshotId);
-        const start = Date.now(); let result;
-        const remainingMs = Math.max(1,Number(p.time_limit)-Number(p.active_ms));
-        const timer = setTimeout(()=>abort.abort('budget_exhausted'),remainingMs);
-        let partial = '';
-        try {
-          result = await generate(model, checkpoint.messages, abort.signal, output => {
-            partial = output;
-            if (!this.stopped && !abort.signal.aborted && this.context.valid(run)) this.store.transaction(() => {
-              this.store.db.prepare('UPDATE messages SET content=? WHERE id=?').run(redact(output,config),run.assistant_message_id);
-              this.store.changed(String(run.assistant_message_id));
-            });
-          },true,Math.min(90000,remainingMs),toolDefinitions,maxTokens);
-        } finally {
-          clearTimeout(timer);
-          this.execution.charge(String(run.id),Date.now()-start,result?.usage != null ? result.usage-inputTokens-maxTokens : Buffer.byteLength(JSON.stringify(result ?? partial))-maxTokens,result?.usage == null);
-        }
-        requireValue(!this.stopped && !abort.signal.aborted && this.context.valid(run),'CANCELLED');
-        this.store.db.prepare("UPDATE run_steps SET status='completed',detail=? WHERE id=?").run(JSON.stringify({modelName:binding.modelName,usage:result.usage ?? null,estimated:result.usage==null}),step);
-        requireValue(result.toolCalls.every(c=>redact(c.callId,config)===c.callId && redact(c.name,config)===c.name),'MODEL_INVALID_RESPONSE');
-        requireValue(!result.toolCalls.some(c=>checkpoint.messages.some(m=>m.toolCalls?.some(old=>old.callId===c.callId))), 'MODEL_INVALID_RESPONSE');
-        requireValue(!result.toolCalls.some(c=>c.name==='complete_task') || result.toolCalls.length===1,'TASK_STEPS_UNVERIFIED');
-        const safeResult = {text:redact(result.text,config),toolCalls:result.toolCalls.map(c=>({...c,arguments:redact(c.arguments,config)}))};
-        requireValue(new Set(safeResult.toolCalls.map(c=>c.callId)).size === safeResult.toolCalls.length,'MODEL_INVALID_RESPONSE');
-        checkpoint.messages.push({role:'assistant',content:safeResult.text,...(safeResult.toolCalls.length ? {toolCalls:safeResult.toolCalls} : {})});
-        checkpoint.fragments.push({sourceType:'model_output',sourceId:step,sourceVersion:fingerprint(safeResult),projectId:run.project_id,role:'assistant',content:JSON.stringify(safeResult)});
-        this.execution.save(run,checkpoint.messages,checkpoint.fragments);
-        if (!result.toolCalls.length) { this.store.runStatus(String(run.id),'completed'); return; }
-      }
+          requireValue(!this.stopped && !abort.signal.aborted && this.context.valid(run),'CANCELLED');
+          this.store.db.prepare("UPDATE run_steps SET status='completed',detail=? WHERE id=?").run(JSON.stringify({modelName:binding.modelName,usage:result.usage ?? null,estimated:result.usage==null}),step);
+          requireValue(result.toolCalls.every(c=>redact(c.callId,config)===c.callId && redact(c.name,config)===c.name),'MODEL_INVALID_RESPONSE');
+          requireValue(!result.toolCalls.some(c=>checkpoint.messages.some(m=>m.toolCalls?.some(old=>old.callId===c.callId))), 'MODEL_INVALID_RESPONSE');
+          requireValue(!result.toolCalls.some(c=>c.name==='complete_task') || result.toolCalls.length===1,'TASK_STEPS_UNVERIFIED');
+          const safeResult = {text:redact(result.text,config),toolCalls:result.toolCalls.map(c=>({...c,arguments:redact(c.arguments,config)}))};
+          requireValue(new Set(safeResult.toolCalls.map(c=>c.callId)).size === safeResult.toolCalls.length,'MODEL_INVALID_RESPONSE');
+          checkpoint.messages.push({role:'assistant',content:safeResult.text,...(safeResult.toolCalls.length ? {toolCalls:safeResult.toolCalls} : {})});
+          checkpoint.fragments.push({sourceType:'model_output',sourceId:step,sourceVersion:fingerprint(safeResult),projectId:run.project_id,role:'assistant',content:JSON.stringify(safeResult)});
+          this.execution.save(run,checkpoint.messages,checkpoint.fragments);
+          return { ...safeResult, usage: result.usage };
+        },
+      });
+      if (this.store.db.prepare('SELECT status FROM runs WHERE id=?').get(run.id)?.status === 'running') this.store.runStatus(String(run.id),'completed');
     } catch (error) {
       const usage = this.execution.progress(String(run.id));
       const status = this.store.db.prepare('SELECT status FROM runs WHERE id=?').get(run.id)?.status;

@@ -3,7 +3,25 @@ import { resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import assert from 'node:assert/strict';
-const bin = execFileSync('swift', ['build', '--package-path', 'native', '--arch', 'arm64', '--show-bin-path'], { encoding: 'utf8' }).trim();
+import { cpSync, mkdtempSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+const bundled = process.argv.includes('--bundled');
+const isolated = bundled ? mkdtempSync('/tmp/tandem-bundle-') : null;
+const bundle = isolated ? `${isolated}/Tandem.app/Contents` : null;
+if (bundle) {
+  try {
+    cpSync(resolve('dist/Tandem.app'), `${isolated}/Tandem.app`, { recursive: true, verbatimSymlinks: true });
+    const bundleRoot = realpathSync(bundle);
+    const checkLinks = path => {
+      for (const entry of readdirSync(path, { withFileTypes: true })) {
+        const child = `${path}/${entry.name}`;
+        if (entry.isSymbolicLink()) assert.ok(realpathSync(child).startsWith(`${bundleRoot}/`), `External bundle link: ${child}`);
+        else if (entry.isDirectory()) checkLinks(child);
+      }
+    };
+    checkLinks(bundle);
+  } catch (error) { rmSync(isolated, { recursive: true, force: true }); throw error; }
+}
+const bin = bundle ? `${bundle}/MacOS` : execFileSync('swift', ['build', '--package-path', 'native', '--arch', 'arm64', '--show-bin-path'], { encoding: 'utf8' }).trim();
 const paths = [];
 const server = createServer(async (request, response) => {
   const chunks = [];
@@ -56,9 +74,12 @@ await once(server, 'listening');
 let timer;
 try {
   const url = `http://127.0.0.1:${server.address().port}/v1`;
-  const child = spawn(`${bin}/Tandem`, ['--smoke-test', process.execPath, resolve('runtime/src/main.ts'), url], { stdio: 'inherit' });
+  const child = spawn(`${bin}/Tandem`, ['--smoke-test', bundle ? `${bundle}/Resources/node` : process.execPath,
+    bundle ? `${bundle}/Resources/runtime/main.js` : resolve('runtime/src/main.ts'), url], {
+    stdio: 'inherit', ...(isolated ? { cwd: isolated, env: { ...process.env, PATH: '/usr/bin:/bin', NODE_PATH: '' } } : {}),
+  });
   timer = setTimeout(() => child.kill('SIGKILL'), 45000);
   const [code] = await once(child, 'exit');
   assert.equal(code, 0);
   assert.deepEqual(paths, ['/v1/responses', '/v1/chat/completions', '/v1/messages', '/v1/messages', '/v1/messages', '/v1/messages', '/v1/chat/completions', '/v1/chat/completions', '/v1/chat/completions']);
-} finally { clearTimeout(timer); server.closeAllConnections(); server.close(); }
+} finally { clearTimeout(timer); server.closeAllConnections(); server.close(); if (isolated) rmSync(isolated, { recursive: true, force: true }); }

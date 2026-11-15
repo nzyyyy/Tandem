@@ -36,6 +36,23 @@ const activity=(s:AppService):any=>s.dispatch('activity.get',{surfaceId:'a'});
 const register=(s:AppService,id='grant',projectId:any=null)=>s.dispatch('directory.register',{id,label:'资料',projectId,resourceId:'fake-device-inode'});
 const resume=(s:AppService,id:string,add={},key=crypto.randomUUID())=>s.dispatch('run.continue',{runId:id,expectedVersion:s.execution.progress(id).version,idempotencyKey:key,...add});
 
+test('pi schema coercion cannot authorize a native read with invalid original line numbers', async () => {
+  const f = await fixture();
+  try {
+    register(f.service);
+    const sent = f.send();
+    await wait(() => f.requests.length === 1);
+    f.reply(0, '', [call('raw-read', 'read_file', { grantId: 'grant', path: 'notes.md', startLine: '1', endLine: 2 })]);
+    await wait(() => f.requests.length === 2);
+    assert.deepEqual(f.service.dispatch('native.next', {}), { requests: [] });
+    assert.equal(JSON.parse(f.requests[1].input.messages.at(-1).content).error, 'TOOL_ARGUMENTS');
+    const invocation = f.service.store.db.prepare('SELECT args FROM invocations WHERE call_id=?').get('raw-read')!;
+    assert.equal(JSON.parse(String(invocation.args)).startLine, '1');
+    f.reply(1, '请提供有效行号');
+    await wait(() => f.row(sent.runId).status === 'completed');
+  } finally { await f.close(); }
+});
+
 for(const api of ['chat_completions','responses','messages']) test(`M3 ${api}: native read, call identity, immutable snapshots and redaction`,async()=>{
   const f=await fixture(api);
   try {

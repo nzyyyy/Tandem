@@ -12,6 +12,7 @@ struct AssistantView: View {
     @State private var confirmNavigation = false
     @State private var showDiagnostics = false
     @State private var filterProject = "*"
+    @State private var detailMessageId: String?
     @SwiftUI.FocusState private var composerFocused: Bool
 
     init(runtime: RuntimeSupervisor) {
@@ -124,55 +125,80 @@ struct AssistantView: View {
                 VStack(alignment: .leading, spacing: 12) { topicTitle; historyFilter }
             }
             .padding(.horizontal, 32).padding(.vertical, 16)
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 32) {
-                        if model.hasMore { Button("加载更早的消息") { Task { await model.loadEarlier() } }.frame(maxWidth: .infinity) }
-                        if model.snapshot == nil {
-                            VStack(alignment: .leading, spacing: 16) {
-                                if let error = model.error {
-                                    Label("暂时无法载入对话", systemImage: "exclamationmark.triangle").font(.headline)
-                                    Text(error).font(.callout).foregroundStyle(TandemStyle.secondary)
-                                    Button("重试加载") { Task { await model.refresh() } }
-                                } else {
-                                    ProgressView(runtime.isConnected ? "正在载入对话…" : "正在启动本地运行环境…")
-                                    Text(runtime.status).font(.caption).foregroundStyle(TandemStyle.secondary)
+            GeometryReader { geometry in
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 32) {
+                            if model.hasMore { Button("加载更早的消息") { Task { await model.loadEarlier() } }.frame(maxWidth: .infinity) }
+                            if model.snapshot == nil {
+                                VStack(alignment: .leading, spacing: 16) {
+                                    if let error = model.error {
+                                        Label("暂时无法载入对话", systemImage: "exclamationmark.triangle").font(.headline)
+                                        Text(error).font(.callout).foregroundStyle(TandemStyle.secondary)
+                                        Button("重试加载") { Task { await model.refresh() } }
+                                    } else {
+                                        ProgressView(runtime.isConnected ? "正在载入对话…" : "正在启动本地运行环境…")
+                                        Text(runtime.status).font(.caption).foregroundStyle(TandemStyle.secondary)
+                                    }
+                                }.padding(.top, 64)
+                            } else if model.messages.isEmpty && model.snapshot?.pendingInteractions.isEmpty == true {
+                                VStack(alignment: .leading, spacing: 16) {
+                                    Image(systemName: "circle.lefthalf.filled").font(.system(size: 28)).foregroundStyle(TandemStyle.accent)
+                                    Text("从一个想法开始").font(.system(size: 28, weight: .semibold))
+                                    Text("说说你正在思考的事。\n话题与历史保存在本机，也可以不关联项目。")
+                                        .font(.system(size: 15)).foregroundStyle(TandemStyle.secondary).lineSpacing(5)
+                                    if model.snapshot?.models.isEmpty == true { Button("配置第一个模型") { navigate("settings") }.buttonStyle(TandemButtonStyle(.primary)) }
+                                }.padding(.top, 64)
+                            } else if timelineSequences.isEmpty {
+                                Text("此项目暂无消息").foregroundStyle(TandemStyle.secondary).padding(.top, 64)
+                            }
+                            ForEach(timelineSequences, id: \.self) { sequence in
+                                if let message = model.messages.first(where: { $0.sequence == sequence }) {
+                                    VStack(spacing: 20) {
+                                        if let boundary = boundaryTitle(for: message) {
+                                            HStack(spacing: 12) {
+                                                Rectangle().fill(TandemStyle.border).frame(height: 1)
+                                                Text(boundary).font(.caption).foregroundStyle(TandemStyle.secondary).lineLimit(1)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                                Rectangle().fill(TandemStyle.border).frame(height: 1)
+                                            }.padding(.vertical, 4)
+                                        }
+                                        MessageView(message: message, model: model,
+                                                    maximumWidth: max(1, min(724, geometry.size.width - 64)) * 0.7) {
+                                            detailMessageId = message.id
+                                        }
+                                    }
+                                } else if let pending = model.snapshot?.pendingInteractions.first(where: { $0.sequence == sequence }) {
+                                    PendingInteractionView(interaction: pending, model: model)
                                 }
-                            }.padding(.top, 64)
-                        } else if model.messages.isEmpty && model.snapshot?.pendingInteractions.isEmpty == true {
-                            VStack(alignment: .leading, spacing: 16) {
-                                Image(systemName: "circle.lefthalf.filled").font(.system(size: 28)).foregroundStyle(TandemStyle.accent)
-                                Text("从一个想法开始").font(.system(size: 28, weight: .semibold))
-                                Text("说说你正在思考的事。\n话题与历史保存在本机，也可以不关联项目。")
-                                    .font(.system(size: 15)).foregroundStyle(TandemStyle.secondary).lineSpacing(5)
-                                if model.snapshot?.models.isEmpty == true { Button("配置第一个模型") { navigate("settings") }.buttonStyle(TandemButtonStyle(.primary)) }
-                            }.padding(.top, 64)
-                        } else if timelineSequences.isEmpty {
-                            Text("此项目暂无消息").foregroundStyle(TandemStyle.secondary).padding(.top, 64)
-                        }
-                        ForEach(timelineSequences, id: \.self) { sequence in
-                            if let message = model.messages.first(where: { $0.sequence == sequence }) {
-                                MessageView(message: message, model: model)
-                            } else if let pending = model.snapshot?.pendingInteractions.first(where: { $0.sequence == sequence }) {
-                                PendingInteractionView(interaction: pending, model: model)
                             }
-                        }
-                        ApprovalCards(model: model)
-                        ForEach(model.snapshot?.activity.runs.filter { $0.status == "paused" } ?? []) { run in
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("执行预算已用尽：\(run.steps)/\(run.step_limit) 步 · \(run.tokens)/\(run.token_limit) Token · \(run.active_ms / 1000)/\(run.time_limit / 1000) 秒")
-                                Button("在 Activity 查看进度与追加预算") { navigate("activity") }
+                            ApprovalCards(model: model)
+                            ForEach(model.snapshot?.activity.runs.filter { $0.status == "paused" } ?? []) { run in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("执行预算已用尽：\(run.steps)/\(run.step_limit) 步 · \(run.tokens)/\(run.token_limit) Token · \(run.active_ms / 1000)/\(run.time_limit / 1000) 秒")
+                                    Button("在 Activity 查看进度与追加预算") { navigate("activity") }
+                                }
                             }
+                            Color.clear.frame(height: 1).id("bottom")
                         }
-                        Color.clear.frame(height: 1).id("bottom")
+                        .frame(maxWidth: 724, alignment: .leading)
+                        .padding(.horizontal, 32).padding(.vertical, 24)
+                        .frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: 724, alignment: .leading)
-                    .padding(.horizontal, 32).padding(.vertical, 24)
-                    .frame(maxWidth: .infinity)
+                    .onChange(of: model.messages.last?.id) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
                 }
-                .onChange(of: model.messages.last?.id) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
             }
             composer
+        }
+        .inspector(isPresented: Binding(get: { detailMessageId != nil }, set: { if !$0 { detailMessageId = nil } })) {
+            if let message = model.messages.first(where: { $0.id == detailMessageId }) {
+                MessageDetailsView(message: message, model: model) {
+                    detailMessageId = nil
+                }.id(message.id).inspectorColumnWidth(min: 300, ideal: 360, max: 460)
+            }
+        }
+        .onChange(of: model.messages.map(\.id)) { _, ids in
+            if let id = detailMessageId, !ids.contains(id) { detailMessageId = nil }
         }
     }
 
@@ -207,34 +233,48 @@ struct AssistantView: View {
             if let error = model.snapshot?.configError {
                 Button(userFacingError(error) + " 打开模型设置") { navigate("settings") }.foregroundStyle(.red)
             }
-            ContextControls(model: model)
-            Toggle("持续任务（保存交付物与完成标准）", isOn: $model.createTask).toggleStyle(.checkbox).font(.caption)
-            if model.createTask {
-                TextField("预期交付物，如：资料优化建议 Markdown 报告", text: $model.taskDeliverable)
-                TextField("完成标准，每行一条", text: $model.taskCriteria, axis: .vertical).lineLimit(2...5)
-            }
             VStack(alignment: .leading, spacing: 16) {
+                if model.createTask || model.newTopic || model.temporary {
+                    HStack(spacing: 12) {
+                        if model.createTask {
+                            Button { model.createTask = false } label: { Label("持续任务", systemImage: "xmark.circle.fill") }
+                                .help("取消持续任务，保留已填写的要求")
+                        }
+                        if model.newTopic || model.temporary {
+                            Button { model.newTopic = false; model.temporary = false } label: {
+                                Label(model.temporary ? "下条为临时插话" : "下条为新话题", systemImage: "xmark.circle.fill")
+                            }
+                        }
+                    }.buttonStyle(TandemButtonStyle(.plain)).font(.caption).foregroundStyle(TandemStyle.accent)
+                }
+                if model.createTask {
+                    VStack(alignment: .leading, spacing: 10) {
+                        TextField("预期交付物，如：资料优化建议 Markdown 报告", text: $model.taskDeliverable)
+                            .accessibilityLabel("预期交付物")
+                        TextField("完成标准，每行一条", text: $model.taskCriteria, axis: .vertical).lineLimit(2...5)
+                            .accessibilityLabel("完成标准")
+                    }.textFieldStyle(.roundedBorder).font(.callout)
+                }
                 TextField("继续这个想法，或开始一个新问题…", text: $model.draft, axis: .vertical)
                     .font(.system(size: 15)).lineLimit(2...7).textFieldStyle(.plain)
                     .focused($composerFocused)
                     .onSubmit { Task { await model.send() } }
                     .accessibilityLabel("消息内容")
-                HStack(alignment: .bottom, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        TandemPicker(title: "模型", value: selectedModelTitle, selection: $model.selectedModel) {
-                            Text(defaultModelTitle).tag("")
-                            ForEach(model.snapshot?.models ?? []) { option in Text("\(option.modelName) · \(model.connectionTitle(option.connectionId))").tag(option.id) }
-                            if !model.selectedModel.isEmpty && !(model.snapshot?.models.contains { $0.id == model.selectedModel } ?? false) { Text("所选模型已失效").tag(model.selectedModel) }
-                        }.labelsHidden().frame(maxWidth: 330).accessibilityLabel("模型")
-                        if model.newTopic || model.temporary {
-                            Button { model.newTopic = false; model.temporary = false } label: {
-                                Label(model.temporary ? "下条为临时插话" : "下条为新话题", systemImage: "xmark.circle.fill")
-                            }.buttonStyle(TandemButtonStyle(.plain)).font(.caption)
-                        }
-                    }
+                HStack(alignment: .center, spacing: 10) {
+                    Menu {
+                        Toggle("持续任务", isOn: $model.createTask)
+                        Divider()
+                        topicActions
+                    } label: { Image(systemName: "plus").frame(width: 24, height: 24) }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                        .help("添加持续任务或切换话题").accessibilityLabel("添加消息选项")
+                    ContextControls(model: model)
                     Spacer(minLength: 0)
-                    Menu { topicActions } label: { Image(systemName: "ellipsis") }
-                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("新话题或临时插话").accessibilityLabel("消息选项")
+                    TandemPicker(title: "模型", value: composerModelTitle, selection: $model.selectedModel) {
+                        Text(defaultModelTitle).tag("")
+                        ForEach(model.snapshot?.models ?? []) { option in Text("\(option.modelName) · \(model.connectionTitle(option.connectionId))").tag(option.id) }
+                        if !model.selectedModel.isEmpty && !(model.snapshot?.models.contains { $0.id == model.selectedModel } ?? false) { Text("所选模型已失效").tag(model.selectedModel) }
+                    }.labelsHidden().frame(maxWidth: 240).accessibilityLabel("模型").help(selectedModelTitle)
                     Button { Task { await model.send() } } label: {
                         Image(systemName: "arrow.up").font(.system(size: 16, weight: .semibold)).frame(width: 24, height: 26)
                     }
@@ -247,11 +287,26 @@ struct AssistantView: View {
             .padding(18)
             .background(TandemStyle.canvas, in: RoundedRectangle(cornerRadius: 14))
             .overlay { RoundedRectangle(cornerRadius: 14).stroke(composerFocused ? TandemStyle.accent : TandemStyle.border, lineWidth: composerFocused ? 2 : 1) }
-            Text("全局连续历史 · 模型仅接收当前话题的相关消息 · ⌘Return 发送")
+            Text("⌘Return 发送 · 话题与来源可在消息详情中查看")
                 .font(.caption).foregroundStyle(TandemStyle.secondary)
         }
         .frame(maxWidth: 724).padding(.horizontal, 32).padding(.top, 12).padding(.bottom, 20)
         .frame(maxWidth: .infinity).background(TandemStyle.canvas)
+    }
+
+    private var composerModelTitle: String {
+        if model.selectedModel.isEmpty { return model.snapshot?.defaultModel.map { "默认 · " + $0.modelName } ?? "请选择模型" }
+        return model.snapshot?.models.first { $0.id == model.selectedModel }?.modelName ?? "所选模型已失效"
+    }
+    private func boundaryTitle(for message: TimelineMessage) -> String? {
+        let previous = model.messages.last { $0.sequence < message.sequence && (filterProject == "*" || ($0.projectId ?? "") == filterProject) }
+        let topicChanged = previous?.sessionId != message.sessionId
+        let projectChanged = previous?.projectId != message.projectId
+        guard topicChanged || projectChanged else { return nil }
+        var labels: [String] = []
+        if topicChanged { labels.append(model.snapshot?.sessions.first { $0.id == message.sessionId }?.title ?? "历史话题") }
+        if projectChanged { labels.append(model.projectTitle(message.projectId)) }
+        return labels.joined(separator: " · ")
     }
 
     private var timelineSequences: [Int] {
@@ -266,109 +321,170 @@ struct AssistantView: View {
     }
 }
 
-private struct MessageView: View {
+struct MessageView: View {
     let message: TimelineMessage
     @ObservedObject var model: AssistantModel
-    @State private var showContext = false
-    @State private var showRoute = false
-    @State private var history: CorrectionHistory?
-    @State private var historyError: String?
+    var maximumWidth: CGFloat
+    var showDetails: () -> Void
+    private var isUser: Bool { message.role == "user" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                if message.role == "assistant" {
-                    Image(systemName: "circle.lefthalf.filled").foregroundStyle(TandemStyle.accent)
+        VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 14) {
+                if !isUser {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Image(systemName: "circle.lefthalf.filled").foregroundStyle(TandemStyle.accent)
+                        Text("Tandem").font(.system(size: 14, weight: .semibold))
+                        if let name = message.modelName {
+                            Text(name).font(.caption).foregroundStyle(TandemStyle.secondary).lineLimit(1)
+                                .help("\(name) · \(model.connectionTitle(message.connectionId))")
+                        }
+                    }
                 }
-                Text(message.role == "user" ? "你" : "Tandem").font(.system(size: 14, weight: .semibold))
-                if let name = message.modelName {
-                    Text("\(name) · \(model.connectionTitle(message.connectionId))")
-                        .font(.caption).foregroundStyle(TandemStyle.secondary).lineLimit(1)
-                        .help("\(name) · \(model.connectionTitle(message.connectionId))")
+                if !message.content.isEmpty {
+                    if isUser {
+                        Text(message.content).font(.system(size: 15)).textSelection(.enabled)
+                            .lineSpacing(6).multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityLabel("你：" + message.content)
+                    } else { MarkdownView(message.content) }
                 }
-                Spacer(minLength: 0)
-                Text(model.snapshot?.sessions.first { $0.id == message.sessionId }?.title ?? "历史话题")
-                    .font(.caption).foregroundStyle(TandemStyle.secondary).lineLimit(1).frame(maxWidth: 180, alignment: .trailing)
-            }
-            if !message.content.isEmpty {
-                Text(message.content).font(.system(size: 15)).textSelection(.enabled)
-                    .lineSpacing(6).frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if message.role == "assistant", message.executionInteractionVersion != message.interactionVersion {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("原回答使用：\(model.projectTitle(message.executionProjectId))。更改归属不会改写历史上下文。")
-                        .font(.caption).foregroundStyle(TandemStyle.secondary)
-                    if let id = message.runId { Button("按当前归属重新处理") { Task { await model.retry(id) } }.disabled(model.sending) }
-                }.padding(12).background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 8))
-            }
-            if let status = message.status, status != "completed" {
-                HStack(alignment: .top, spacing: 12) {
-                    if status == "queued" || status == "running" {
-                        ProgressView().controlSize(.small)
-                        Text(status == "queued" ? "排队中" : "正在生成…").font(.callout).foregroundStyle(TandemStyle.secondary)
-                        if let id = message.runId { Button("停止") { Task { await model.cancel(id) } }.buttonStyle(TandemButtonStyle(.plain)) }
-                    } else {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(userFacingError(message.errorCode ?? "INTERRUPTED")).font(.callout).foregroundStyle(status == "cancelled" ? Color.secondary : Color.red)
-                            if let id = message.runId {
-                                Button(model.selectedModel.isEmpty ? "使用原模型重试" : "使用所选模型重试") { Task { await model.retry(id) } }.disabled(model.sending)
+                if message.role == "assistant", message.executionInteractionVersion != message.interactionVersion {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("原回答使用：\(model.projectTitle(message.executionProjectId))。更改归属不会改写历史上下文。")
+                            .font(.caption).foregroundStyle(TandemStyle.secondary)
+                        if let id = message.runId { Button("按当前归属重新处理") { Task { await model.retry(id) } }.disabled(model.sending) }
+                    }.padding(12).background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 8))
+                }
+                if let status = message.status, status != "completed" {
+                    HStack(alignment: .top, spacing: 12) {
+                        if status == "queued" || status == "running" {
+                            ProgressView().controlSize(.small)
+                            Text(status == "queued" ? "排队中" : "正在生成…").font(.callout).foregroundStyle(TandemStyle.secondary)
+                            if let id = message.runId { Button("停止") { Task { await model.cancel(id) } }.buttonStyle(TandemButtonStyle(.plain)) }
+                        } else if status == "waiting_approval" {
+                            Text("等待目录授权，请在审批卡片中处理。")
+                                .font(.callout).foregroundStyle(TandemStyle.secondary)
+                        } else if status == "paused" {
+                            Text("执行已暂停，请在 Activity 查看进度与预算。")
+                                .font(.callout).foregroundStyle(TandemStyle.secondary)
+                        } else {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(userFacingError(message.errorCode ?? "INTERRUPTED")).font(.callout).foregroundStyle(status == "cancelled" ? Color.secondary : Color.red)
+                                if let id = message.runId {
+                                    Button(model.selectedModel.isEmpty ? "使用原模型重试" : "使用所选模型重试") { Task { await model.retry(id) } }.disabled(model.sending)
+                                }
                             }
                         }
                     }
                 }
             }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 16) { metadata }
-                VStack(alignment: .leading, spacing: 10) { metadata }
-            }.font(.caption)
-            if showRoute, let reason = message.routeReason {
-                Text("话题选择：" + reason).font(.caption).foregroundStyle(TandemStyle.secondary)
-            }
-            if let historyError { Text(historyError).font(.caption).foregroundStyle(.red) }
-            if let history {
-                if history.corrections.isEmpty { Text("尚无归属纠正记录").font(.caption).foregroundStyle(TandemStyle.secondary) }
-                ForEach(history.corrections) { record in
-                    Text("\(model.projectTitle(record.from_project)) → \(model.projectTitle(record.to_project)) · \(Date(timeIntervalSince1970: record.created_at / 1000).formatted())")
-                        .font(.caption).foregroundStyle(TandemStyle.secondary)
-                }
-            }
-        }
-        .sheet(isPresented: $showContext) { if let id = message.snapshotId { RunContextView(id: id, model: model) } }
-        .padding(message.role == "user" ? 20 : 0)
-        .background(message.role == "user" ? TandemStyle.surface : .clear, in: RoundedRectangle(cornerRadius: 12))
-    }
-
-    @ViewBuilder private var metadata: some View {
-        if message.interactionId != nil {
+            .padding(isUser ? 16 : 0)
+            .background(isUser ? TandemStyle.surface : .clear, in: RoundedRectangle(cornerRadius: 16))
             Menu {
-                Button("未关联项目") { Task { await model.correct(message, projectId: "") } }
-                ForEach((model.snapshot?.projects ?? []).filter { $0.status == "open" }) { project in
-                    Button(project.title) { Task { await model.correct(message, projectId: project.id) } }
+                Button(isUser ? "复制消息" : "复制 Markdown") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(message.content, forType: .string)
                 }
-            } label: { Label(model.projectTitle(message.projectId), systemImage: "folder") }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize(horizontal: false, vertical: true)
-                .help("纠正此交互的项目归属").accessibilityLabel("项目归属：" + model.projectTitle(message.projectId))
-        } else { Label(model.projectTitle(message.projectId), systemImage: "folder").foregroundStyle(TandemStyle.secondary) }
-        if message.snapshotId != nil {
-            Button { showContext = true } label: { Label("执行上下文", systemImage: "doc.text.magnifyingglass") }
-                .buttonStyle(TandemButtonStyle(.plain)).foregroundStyle(TandemStyle.secondary)
-        }
-        Menu {
-            if message.interactionId != nil {
-                Button(history == nil ? "查看纠正记录" : "收起纠正记录") {
-                    if history != nil { history = nil }
-                    else {
-                        Task {
-                            do {
-                                history = try await model.call("interaction.history", payload: ["interactionId": message.interactionId!], as: CorrectionHistory.self)
-                                historyError = nil
-                            } catch { historyError = "无法读取纠正记录，请重试。" }
+                Button("消息详情与来源", action: showDetails)
+                if message.interactionId != nil {
+                    Menu("纠正项目归属") {
+                        Button("未关联项目") { Task { await model.correct(message, projectId: "") } }
+                        ForEach((model.snapshot?.projects ?? []).filter { $0.status == "open" }) { project in
+                            Button(project.title) { Task { await model.correct(message, projectId: project.id) } }
                         }
                     }
                 }
+            } label: { Image(systemName: "ellipsis").frame(width: 24, height: 22) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .foregroundStyle(TandemStyle.secondary).help("消息详情与项目归属").accessibilityLabel("消息操作")
+        }
+        .frame(maxWidth: isUser ? maximumWidth : .infinity, alignment: isUser ? .trailing : .leading)
+        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+    }
+}
+
+private struct MessageDetailsView: View {
+    let message: TimelineMessage
+    @ObservedObject var model: AssistantModel
+    var close: () -> Void
+    @State private var context: RunContext?
+    @State private var history: CorrectionHistory?
+    @State private var contextError: String?
+    @State private var historyError: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("消息详情").font(.headline)
+                Spacer()
+                Button(action: close) { Image(systemName: "xmark").frame(width: 24, height: 24) }
+                    .buttonStyle(TandemButtonStyle(.plain)).help("关闭详情").accessibilityLabel("关闭消息详情")
+            }.padding(20)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(message.role == "user" ? "你的消息" : "Tandem 的回答").font(.headline)
+                        Text(model.snapshot?.sessions.first { $0.id == message.sessionId }?.title ?? "历史话题")
+                        if let name = message.modelName { Text("\(name) · \(model.connectionTitle(message.connectionId))").font(.caption).foregroundStyle(TandemStyle.secondary) }
+                        Text(message.content).font(.callout).lineLimit(6).textSelection(.enabled)
+                    }
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("项目归属").font(.headline)
+                        Text(model.projectTitle(message.projectId)).font(.callout)
+                        if message.interactionId != nil {
+                            Menu("纠正项目归属") {
+                                Button("未关联项目") { Task { await model.correct(message, projectId: "") } }
+                                ForEach((model.snapshot?.projects ?? []).filter { $0.status == "open" }) { project in
+                                    Button(project.title) { Task { await model.correct(message, projectId: project.id) } }
+                                }
+                            }.fixedSize()
+                        }
+                        if let reason = message.routeReason { Text("话题选择：" + reason).font(.caption).foregroundStyle(TandemStyle.secondary) }
+                    }
+                    if let id = message.snapshotId {
+                        Divider()
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("执行上下文").font(.headline)
+                            if let context {
+                                Text("\(model.projectTitle(context.projectId)) · \(context.mode)").font(.caption).foregroundStyle(TandemStyle.secondary)
+                                ContextFragmentsView(context: context, model: model)
+                            } else if let contextError { Text(contextError).font(.callout).foregroundStyle(.red) }
+                            else { ProgressView() }
+                        }
+                        .task(id: "\(id):\(model.snapshot?.focus.contextMode ?? "automatic"):\(model.snapshot?.focus.activeProjectId ?? "")") {
+                            context = nil; contextError = nil
+                            do {
+                                let result = try await model.context(id)
+                                if !Task.isCancelled { context = result }
+                            } catch { if !Task.isCancelled { contextError = "当前范围无法查看此快照，请先切换项目或上下文模式。" } }
+                        }
+                    }
+                    if message.interactionId != nil {
+                        Divider()
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("归属纠正记录").font(.headline)
+                            if let history {
+                                if history.corrections.isEmpty { Text("尚无纠正记录").font(.caption).foregroundStyle(TandemStyle.secondary) }
+                                ForEach(history.corrections) { record in
+                                    Text("\(model.projectTitle(record.from_project)) → \(model.projectTitle(record.to_project))\n\(Date(timeIntervalSince1970: record.created_at / 1000).formatted())")
+                                        .font(.caption).foregroundStyle(TandemStyle.secondary)
+                                }
+                            } else if let historyError { Text(historyError).font(.callout).foregroundStyle(.red) }
+                            else { ProgressView() }
+                        }
+                        .task(id: message.interactionVersion) {
+                            history = nil; historyError = nil
+                            do {
+                                let result = try await model.call("interaction.history", payload: ["interactionId": message.interactionId!], as: CorrectionHistory.self)
+                                if !Task.isCancelled { history = result }
+                            } catch { if !Task.isCancelled { historyError = "无法读取纠正记录，请关闭详情后重试。" } }
+                        }
+                    }
+                }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
             }
-            if message.role == "user", message.routeReason != nil { Button(showRoute ? "收起话题选择原因" : "查看话题选择原因") { showRoute.toggle() } }
-        } label: { Image(systemName: "ellipsis") }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("消息详情").accessibilityLabel("消息详情")
+        }
+        .background(TandemStyle.canvas).foregroundStyle(TandemStyle.ink)
     }
 }

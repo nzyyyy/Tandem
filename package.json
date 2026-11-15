@@ -9,7 +9,13 @@
     "typecheck": "tsc -p tsconfig.check.json && swift build --package-path native --arch arm64",
     "test": "node --test runtime/test/*.test.ts && swift test --package-path native --arch arm64 && node scripts/smoke.mjs",
     "dev": "node scripts/launch.mjs",
-    "test:lifecycle": "pnpm run build && node scripts/lifecycle.mjs"
+    "test:lifecycle": "pnpm run build && node scripts/lifecycle.mjs",
+    "test:bundle": "node scripts/smoke.mjs --bundled"
   },
-  "devDependencies": { "@types/node": "24.10.1", "typescript": "5.9.3" }
+  "devDependencies": { "@types/node": "24.10.1", "typescript": "5.9.3" },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "1.5.2",
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-coding-agent": "1.5.2"
+  }
 }

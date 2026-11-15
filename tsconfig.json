@@ -3,6 +3,7 @@
     "target": "ES2023",
     "module": "NodeNext",
     "strict": true,
+    "skipLibCheck": true,
     "verbatimModuleSyntax": true,
     "erasableSyntaxOnly": true,
     "rewriteRelativeImportExtensions": true,

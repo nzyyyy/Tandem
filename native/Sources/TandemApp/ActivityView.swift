@@ -26,6 +26,7 @@ struct ApprovalCards: View {
 struct ActivityView: View {
     @ObservedObject var model: AssistantModel
     @State private var result: String?
+    @State private var resultIsMarkdown = true
     @State private var editing: PersistentTask?
     @State private var loadError: String?
     var body: some View {
@@ -84,7 +85,7 @@ struct ActivityView: View {
                                                 if let id = revision.result_ref { content = try await model.result(id) }
                                                 texts.append("## 修订 \(revision.revision) · \(executionStatus(revision.status))\n\(revision.deliverable)\n\n\(content ?? "尚无已完成交付物")")
                                             }
-                                            result = texts.joined(separator: "\n\n")
+                                            resultIsMarkdown = true; result = texts.joined(separator: "\n\n")
                                         } catch { loadError = "无法读取历史交付，请重新加载。" }
                                     }
                                 }
@@ -126,7 +127,7 @@ struct ActivityView: View {
                                                 Task {
                                                     do {
                                                         let context = try await model.context(id)
-                                                        result = context.fragments.map { "\($0.sourceType) · \($0.sourceVersion)\n\($0.content)" }.joined(separator: "\n\n")
+                                                        resultIsMarkdown = false; result = context.fragments.map { "\($0.sourceType) · \($0.sourceVersion)\n\($0.content)" }.joined(separator: "\n\n")
                                                     } catch { loadError = "上下文不可用或超出当前范围。" }
                                                 }
                                             }
@@ -144,17 +145,19 @@ struct ActivityView: View {
                 HStack {
                     Text("执行结果与来源").font(.headline)
                     Spacer()
-                    Button("复制 Markdown") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(result ?? "", forType: .string) }
+                    Button(resultIsMarkdown ? "复制 Markdown" : "复制原文") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(result ?? "", forType: .string) }
                     Button("关闭") { result = nil }
                 }
-                ScrollView { Text(LocalizedStringKey(result ?? "")).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                    .environment(\.openURL, OpenURLAction { _ in .discarded })
+                ScrollView {
+                    if resultIsMarkdown { MarkdownView(result ?? "") }
+                    else { Text(result ?? "").textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                }
             }.padding(24).frame(minWidth: 650, minHeight: 480)
         }
         .sheet(item: $editing) { task in TaskRevisionView(model: model, task: task) }
     }
     private func openResult(_ id: String) {
-        Task { do { result = try await model.result(id) } catch { loadError = "结果不可用或超出当前范围。" } }
+        Task { do { let content = try await model.result(id); resultIsMarkdown = true; result = content } catch { loadError = "结果不可用或超出当前范围。" } }
     }
 }
 
