@@ -62,8 +62,6 @@ struct MemoryView: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("事实与决策保留来源。自动保存不代表已确认；暂停、候选及历史版本不会作为现行知识使用。遗忘会清理本地派生副本，原聊天保留。")
-                        .font(.callout).foregroundStyle(TandemStyle.secondary)
                     TextField("搜索事实、决策及历史", text: $query).textFieldStyle(.roundedBorder)
                         .onSubmit { Task { await reload() } }
                     if let error { Text(error).foregroundStyle(.red) }
@@ -72,6 +70,7 @@ struct MemoryView: View {
                             HStack {
                                 Text(record.kind == "decision" ? "决策" : "事实").font(.caption.weight(.semibold))
                                 Text(statusTitle(record.status)).font(.caption).foregroundStyle(TandemStyle.secondary)
+                                    .help("暂停、候选及历史版本不会作为现行知识使用。")
                                 Text(model.projectTitle(record.project_id)).font(.caption).foregroundStyle(TandemStyle.secondary)
                                 Spacer()
                                 Button("证据与修正") { Task { await select(record) } }
@@ -83,7 +82,7 @@ struct MemoryView: View {
                             if let old = record.supersedes_id { Text("替代版本：\(old)").font(.caption).textSelection(.enabled) }
                         }.padding(16).background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 10))
                     }
-                    if records.isEmpty { Text("暂无匹配记忆。可从明确的用户陈述保存，或在对话中确认项目决策。") }
+                    if records.isEmpty { Text("暂无匹配记忆").foregroundStyle(TandemStyle.secondary) }
                     if !markers.isEmpty {
                         Divider()
                         Text("遗忘标记").font(.headline)

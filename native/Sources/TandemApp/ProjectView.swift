@@ -27,11 +27,6 @@ struct ProjectView: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 32) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("长期目标，持续积累").font(.system(size: 24, weight: .semibold))
-                        Text("项目用于整理相关对话；普通问题也可以不关联项目。")
-                            .font(.system(size: 14)).foregroundStyle(TandemStyle.secondary)
-                    }
                     ViewThatFits(in: .horizontal) {
                         HStack(alignment: .top, spacing: 32) {
                             projectList.frame(width: 240)
@@ -89,9 +84,9 @@ struct ProjectView: View {
                 Spacer()
                 if let project { Text(project.status == "archived" ? "已归档" : "进行中").font(.caption).foregroundStyle(TandemStyle.accent) }
             }
-            EditorField(title: "项目名称") { TextField("为这个目标起个名字", text: $title).accessibilityLabel("项目名称") }
+            EditorField(title: "项目名称") { TextField("名称", text: $title).accessibilityLabel("项目名称") }
             EditorField(title: "目标或说明") {
-                TextField("想达成什么？写下目标或背景…", text: $description, axis: .vertical)
+                TextField("目标或背景", text: $description, axis: .vertical)
                     .lineLimit(5...10).accessibilityLabel("目标或说明")
             }
             HStack(spacing: 12) {
@@ -107,12 +102,11 @@ struct ProjectView: View {
                 Divider()
                 VStack(alignment: .leading, spacing: 16) {
                     Text("项目管理").font(.system(size: 14, weight: .semibold))
-                    Text("归档后保留全部历史，可以随时恢复。").font(.callout).foregroundStyle(TandemStyle.secondary)
                     Button(p.status == "archived" ? "恢复项目" : "归档项目") {
                         Task { await save(status: p.status == "archived" ? "open" : "archived") }
                     }.disabled(working || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .help("归档后保留全部历史，可以随时恢复。")
                     Button("预览永久删除…", role: .destructive) { Task { await deletionPreview(p.id) } }.disabled(working)
-                    Text("先查看影响范围，再确认删除。").font(.caption).foregroundStyle(TandemStyle.secondary)
                 }
             }
             if let preview { deletionConfirmation(preview) }
@@ -189,6 +183,7 @@ struct ContextControls: View {
             Label(summary, systemImage: model.snapshot?.focus.contextMode == "isolated" ? "lock.shield" : "slider.horizontal.3")
                 .font(.caption).lineLimit(1)
                 .foregroundStyle(model.snapshot?.focus.contextMode == "isolated" ? TandemStyle.accent : TandemStyle.secondary)
+                .frame(minHeight: 32)
         }
         .buttonStyle(TandemButtonStyle(.plain))
         .help(summary + " · 点击设置上下文范围").accessibilityLabel("上下文范围：" + summary)

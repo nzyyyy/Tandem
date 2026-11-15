@@ -111,6 +111,7 @@ struct TandemButtonStyle: ButtonStyle {
     var kind: Kind = .standard
     @Environment(\.isEnabled) private var enabled
     @Environment(\.isFocused) private var focused
+    @Environment(\.controlSize) private var controlSize
     @State private var hovered = false
 
     init(_ kind: Kind = .standard) { self.kind = kind }
@@ -119,8 +120,8 @@ struct TandemButtonStyle: ButtonStyle {
         configuration.label
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(configuration.role == .destructive ? Color.red : kind == .primary ? TandemStyle.onAccent : TandemStyle.ink)
-            .padding(.horizontal, kind == .plain ? 0 : 14)
-            .padding(.vertical, kind == .plain ? 0 : 9)
+            .padding(.horizontal, kind == .plain ? 0 : controlSize == .small ? 8 : 14)
+            .padding(.vertical, kind == .plain ? 0 : controlSize == .small ? 8 : 9)
             .background(background, in: RoundedRectangle(cornerRadius: 8))
             .overlay {
                 RoundedRectangle(cornerRadius: 8)
@@ -144,6 +145,7 @@ struct TandemMenuLabel<Content: View>: View {
     @ViewBuilder var content: Content
     @Environment(\.isEnabled) private var enabled
     @Environment(\.isFocused) private var focused
+    @Environment(\.controlSize) private var controlSize
     @State private var hovered = false
     var body: some View {
         HStack(spacing: 10) {
@@ -152,7 +154,7 @@ struct TandemMenuLabel<Content: View>: View {
                 .foregroundStyle(TandemStyle.secondary).accessibilityHidden(true)
         }
         .font(.system(size: 13, weight: .medium)).foregroundStyle(TandemStyle.ink)
-        .padding(.horizontal, 12).padding(.vertical, 9)
+        .padding(.horizontal, 12).padding(.vertical, controlSize == .small ? 8 : 9)
         .background(hovered && enabled ? TandemStyle.surface : TandemStyle.canvas, in: RoundedRectangle(cornerRadius: 8))
         .overlay { RoundedRectangle(cornerRadius: 8).stroke(focused ? TandemStyle.accent : TandemStyle.border, lineWidth: focused ? 2 : 1) }
         .opacity(enabled ? 1 : 0.45)

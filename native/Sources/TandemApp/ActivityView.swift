@@ -62,10 +62,6 @@ struct ActivityView: View {
                             ForEach(Array(task.criteriaList.enumerated()), id: \.offset) { index, criterion in
                                 Text("\(index + 1). \(criterion)")
                             }
-                            if task.status != "completed" {
-                                Text("尚未完成：需要核验全部标准、工具步骤并持久化产物；Run 结束不会直接完成任务。")
-                                    .font(.caption).foregroundStyle(TandemStyle.secondary)
-                            }
                             ForEach(Array(task.evidenceList.enumerated()), id: \.offset) { index, evidence in
                                 Text("完成依据 \(index + 1)：\(evidence)").font(.callout)
                             }

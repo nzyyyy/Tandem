@@ -5,6 +5,24 @@ import TandemCore
 @testable import TandemApp
 
 final class ConversationLayoutTests: XCTestCase {
+    func testNavigationTracksTheQuestionWhileReadingItsAnswer() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            ["id": "q1", "sessionId": "topic", "sequence": 1, "role": "user", "content": "第一问"],
+            ["id": "a1", "sessionId": "topic", "sequence": 2, "role": "assistant", "content": "第一答"],
+            ["id": "q2", "sessionId": "topic", "sequence": 3, "role": "user", "content": "第二问"],
+            ["id": "a2", "sessionId": "topic", "sequence": 4, "role": "assistant", "content": "第二答"]
+        ])
+        let messages = try JSONDecoder().decode([TimelineMessage].self, from: data)
+        var navigation = ConversationNavigation(messages: messages, visibleSequence: 2, maximumHeight: 400, jump: { _ in })
+        XCTAssertEqual(navigation.entries.map(\.id), ["q1", "q2"])
+        XCTAssertEqual(navigation.activeMessageID, "q1")
+        navigation = ConversationNavigation(messages: messages, visibleSequence: 4, maximumHeight: 400, jump: { _ in })
+        XCTAssertEqual(navigation.activeMessageID, "q2")
+        navigation = ConversationNavigation(messages: [], visibleSequence: nil, maximumHeight: 400, jump: { _ in })
+        XCTAssertTrue(navigation.entries.isEmpty)
+        XCTAssertNil(navigation.activeMessageID)
+    }
+
     func testUserBubblesStayCompactOnTheRightAndLongTextWraps() async throws {
         try await MainActor.run {
             let model = AssistantModel(runtime: RuntimeSupervisor())

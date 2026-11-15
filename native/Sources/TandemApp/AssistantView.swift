@@ -13,6 +13,8 @@ struct AssistantView: View {
     @State private var showDiagnostics = false
     @State private var filterProject = "*"
     @State private var detailMessageId: String?
+    @State private var visibleSequences: [Int] = []
+    @State private var isNearBottom = true
     @SwiftUI.FocusState private var composerFocused: Bool
 
     init(runtime: RuntimeSupervisor) {
@@ -29,10 +31,7 @@ struct AssistantView: View {
                         .background(TandemStyle.accent, in: RoundedRectangle(cornerRadius: 9))
                     Text("Tandem").font(.system(size: 22, weight: .semibold))
                 }
-                .padding(.top, 20).padding(.horizontal, 20)
-                Text("让想法，持续向前。")
-                    .font(.caption).foregroundStyle(TandemStyle.secondary)
-                    .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 28)
+                .padding(.top, 20).padding(.horizontal, 20).padding(.bottom, 24)
                 VStack(spacing: 4) {
                     SelectionRow(title: "对话", symbol: "bubble.left.and.bubble.right", selected: navigation.value == "assistant") { navigate("assistant") }
                     SelectionRow(title: "Activity", symbol: "list.bullet.rectangle", selected: navigation.value == "activity") { navigate("activity") }
@@ -51,9 +50,6 @@ struct AssistantView: View {
                                 else { navigate("assistant", sessionId: session.id) }
                             }
                         }
-                        if model.snapshot?.sessions.isEmpty == true {
-                            Text("话题会随对话出现在这里").font(.caption).foregroundStyle(TandemStyle.secondary).padding(12)
-                        }
                     }.padding(.horizontal, 12)
                 }
                 VStack(alignment: .leading, spacing: 10) {
@@ -70,12 +66,17 @@ struct AssistantView: View {
             .disabled(editorBusy)
             .navigationSplitViewColumnWidth(min: 200, ideal: 238, max: 300)
         } detail: {
-            Group {
+            ZStack {
+                // Keep the scroll view mounted so page changes preserve its exact offset.
+                conversation
+                    .opacity(navigation.value == "assistant" ? 1 : 0)
+                    .disabled(navigation.value != "assistant")
+                    .allowsHitTesting(navigation.value == "assistant")
+                    .accessibilityHidden(navigation.value != "assistant")
                 if navigation.value == "settings" { ModelSettingsView(model: model, hasUnsavedChanges: $hasUnsavedChanges, busy: $editorBusy) }
                 else if navigation.value == "projects" { ProjectView(model: model, hasUnsavedChanges: $hasUnsavedChanges, working: $editorBusy) }
                 else if navigation.value == "activity" { ActivityView(model: model) }
                 else if navigation.value == "memory" { MemoryView(model: model, working: $editorBusy) { navigate("assistant", sessionId: $0) } }
-                else { conversation }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(TandemStyle.canvas)
@@ -84,9 +85,15 @@ struct AssistantView: View {
         .buttonStyle(TandemButtonStyle())
         .frame(minWidth: 860, minHeight: 600)
         .defaultFocus($composerFocused, true)
-        .task { await model.poll(surfaceId: surfaceId) }
+        .task {
+            await Task.yield()
+            composerFocused = true
+            await model.poll(surfaceId: surfaceId)
+        }
         .onChange(of: navigation.value) { _, _ in
             hasUnsavedChanges = false
+            composerFocused = navigation.value == "assistant"
+            detailMessageId = nil
         }
         .confirmationDialog("放弃未保存的修改？", isPresented: $confirmNavigation) {
             Button("放弃修改并离开", role: .destructive) { navigation.discard(); focusPendingSession() }
@@ -145,8 +152,6 @@ struct AssistantView: View {
                                 VStack(alignment: .leading, spacing: 16) {
                                     Image(systemName: "circle.lefthalf.filled").font(.system(size: 28)).foregroundStyle(TandemStyle.accent)
                                     Text("从一个想法开始").font(.system(size: 28, weight: .semibold))
-                                    Text("说说你正在思考的事。\n话题与历史保存在本机，也可以不关联项目。")
-                                        .font(.system(size: 15)).foregroundStyle(TandemStyle.secondary).lineSpacing(5)
                                     if model.snapshot?.models.isEmpty == true { Button("配置第一个模型") { navigate("settings") }.buttonStyle(TandemButtonStyle(.primary)) }
                                 }.padding(.top, 64)
                             } else if timelineSequences.isEmpty {
@@ -167,9 +172,9 @@ struct AssistantView: View {
                                                     maximumWidth: max(1, min(724, geometry.size.width - 64)) * 0.7) {
                                             detailMessageId = message.id
                                         }
-                                    }
+                                    }.id(sequence)
                                 } else if let pending = model.snapshot?.pendingInteractions.first(where: { $0.sequence == sequence }) {
-                                    PendingInteractionView(interaction: pending, model: model)
+                                    PendingInteractionView(interaction: pending, model: model).id(sequence)
                                 }
                             }
                             ApprovalCards(model: model)
@@ -181,11 +186,32 @@ struct AssistantView: View {
                             }
                             Color.clear.frame(height: 1).id("bottom")
                         }
+                        .scrollTargetLayout()
                         .frame(maxWidth: 724, alignment: .leading)
                         .padding(.horizontal, 32).padding(.vertical, 24)
                         .frame(maxWidth: .infinity)
                     }
-                    .onChange(of: model.messages.last?.id) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
+                    .onScrollGeometryChange(for: Bool.self) { geometry in
+                        geometry.contentSize.height - geometry.visibleRect.maxY < 80
+                    } action: { _, nearBottom in
+                        if navigation.value == "assistant" { isNearBottom = nearBottom }
+                    }
+                    .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.01) { sequences in
+                        if navigation.value == "assistant" { visibleSequences = sequences }
+                    }
+                    .onChange(of: model.messages.last?.id) { _, _ in
+                        if navigation.value == "assistant", isNearBottom || model.sending,
+                           let sequence = model.messages.last?.sequence, timelineSequences.contains(sequence) {
+                            proxy.scrollTo("bottom", anchor: .bottom)
+                        }
+                    }
+                    .overlay(alignment: .leading) {
+                        ConversationNavigation(messages: model.messages.filter { filterProject == "*" || ($0.projectId ?? "") == filterProject },
+                                               visibleSequence: visibleSequences.min(), maximumHeight: max(0, geometry.size.height - 24)) { sequence in
+                            withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(sequence, anchor: .top) }
+                        }
+                        .padding(.leading, 4)
+                    }
                 }
             }
             composer
@@ -249,13 +275,13 @@ struct AssistantView: View {
                 }
                 if model.createTask {
                     VStack(alignment: .leading, spacing: 10) {
-                        TextField("预期交付物，如：资料优化建议 Markdown 报告", text: $model.taskDeliverable)
+                        TextField("预期交付物", text: $model.taskDeliverable)
                             .accessibilityLabel("预期交付物")
                         TextField("完成标准，每行一条", text: $model.taskCriteria, axis: .vertical).lineLimit(2...5)
                             .accessibilityLabel("完成标准")
                     }.textFieldStyle(.roundedBorder).font(.callout)
                 }
-                TextField("继续这个想法，或开始一个新问题…", text: $model.draft, axis: .vertical)
+                TextField("输入消息…", text: $model.draft, axis: .vertical)
                     .font(.system(size: 15)).lineLimit(2...7).textFieldStyle(.plain)
                     .focused($composerFocused)
                     .onSubmit { Task { await model.send() } }
@@ -265,7 +291,7 @@ struct AssistantView: View {
                         Toggle("持续任务", isOn: $model.createTask)
                         Divider()
                         topicActions
-                    } label: { Image(systemName: "plus").frame(width: 24, height: 24) }
+                    } label: { Image(systemName: "plus").frame(width: 32, height: 32) }
                         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                         .help("添加持续任务或切换话题").accessibilityLabel("添加消息选项")
                     ContextControls(model: model)
@@ -276,19 +302,17 @@ struct AssistantView: View {
                         if !model.selectedModel.isEmpty && !(model.snapshot?.models.contains { $0.id == model.selectedModel } ?? false) { Text("所选模型已失效").tag(model.selectedModel) }
                     }.labelsHidden().frame(maxWidth: 240).accessibilityLabel("模型").help(selectedModelTitle)
                     Button { Task { await model.send() } } label: {
-                        Image(systemName: "arrow.up").font(.system(size: 16, weight: .semibold)).frame(width: 24, height: 26)
+                        Image(systemName: "arrow.up").font(.system(size: 14, weight: .semibold)).frame(width: 16, height: 16)
                     }
-                    .buttonStyle(TandemButtonStyle(.primary)).controlSize(.large)
+                    .buttonStyle(TandemButtonStyle(.primary))
                     .disabled(model.sending || model.snapshot == nil || model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .keyboardShortcut(.return, modifiers: .command)
                     .help("发送消息（⌘Return）").accessibilityLabel("发送消息")
-                }
+                }.controlSize(.small).padding(.top, 8)
             }
-            .padding(18)
+            .padding(.horizontal, 18).padding(.top, 18).padding(.bottom, 10)
             .background(TandemStyle.canvas, in: RoundedRectangle(cornerRadius: 14))
             .overlay { RoundedRectangle(cornerRadius: 14).stroke(composerFocused ? TandemStyle.accent : TandemStyle.border, lineWidth: composerFocused ? 2 : 1) }
-            Text("⌘Return 发送 · 话题与来源可在消息详情中查看")
-                .font(.caption).foregroundStyle(TandemStyle.secondary)
         }
         .frame(maxWidth: 724).padding(.horizontal, 32).padding(.top, 12).padding(.bottom, 20)
         .frame(maxWidth: .infinity).background(TandemStyle.canvas)

@@ -32,10 +32,6 @@ struct ModelSettingsView: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 32) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("连接你的模型").font(.system(size: 24, weight: .semibold))
-                        Text("管理模型接入与默认选择。").font(.system(size: 14)).foregroundStyle(TandemStyle.secondary)
-                    }
                     defaultModel
                     HStack {
                         Text("模型供应商").font(.system(size: 15, weight: .semibold))
@@ -46,11 +42,8 @@ struct ModelSettingsView: View {
                         } label: { Label("添加供应商", systemImage: "plus") }.disabled(revision == nil || isWorking)
                     }
                     if configuration.modelConnections.isEmpty {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Label("还没有供应商", systemImage: "network").font(.headline)
-                            Text("添加供应商，填写名称、地址和 API Key，再逐项添加模型。")
-                                .font(.callout).foregroundStyle(TandemStyle.secondary)
-                        }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                        Label("还没有供应商", systemImage: "network").font(.headline)
+                            .padding(24).frame(maxWidth: .infinity, alignment: .leading)
                             .background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 12))
                     } else {
                         ViewThatFits(in: .horizontal) {
@@ -106,10 +99,9 @@ struct ModelSettingsView: View {
                     }
                 }
             }.labelsHidden().frame(maxWidth: 420).disabled(revision == nil).accessibilityLabel("全局默认模型")
-            Text("手动选择优先；已有回答与排队中的请求保留原模型。")
-                .font(.caption).foregroundStyle(TandemStyle.secondary)
         }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
             .background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+            .help("手动选择优先；已有回答与排队中的请求保留原模型。")
     }
 
     private var connectionList: some View {
@@ -191,13 +183,12 @@ private struct ConnectionEditor: View {
         EditorField(title: "API Base URL") {
             TextField("https://api.example.com/v1", text: $connection.url).textContentType(.URL).accessibilityLabel("API Base URL")
         }
-        Text("将追加 /\(connection.apiType == "chat_completions" ? "chat/completions" : connection.apiType)。需要 /v1 的服务，请在 Base URL 中包含 /v1。")
-            .font(.caption).foregroundStyle(TandemStyle.secondary)
+        .help("将追加 /\(connection.apiType == "chat_completions" ? "chat/completions" : connection.apiType)。需要 /v1 的服务，请在 Base URL 中包含 /v1。")
         EditorField(title: "API Key") { SecureField("输入 API Key", text: $connection.key).accessibilityLabel("API Key") }
         EditorField(title: "模型（\(connection.modelNames.count)/20）") {
             VStack(alignment: .leading, spacing: 12) {
                 if connection.modelNames.isEmpty {
-                    Text("还没有模型，请在下方添加。").font(.callout).foregroundStyle(TandemStyle.secondary)
+                    Text("暂无模型").font(.callout).foregroundStyle(TandemStyle.secondary)
                 } else {
                     VStack(spacing: 0) {
                         ForEach(connection.modelNames, id: \.self) { name in
@@ -218,7 +209,7 @@ private struct ConnectionEditor: View {
                         .disabled(connection.modelAdditionError(newModelName) != nil)
                 }
                 if !newModelName.isEmpty {
-                    Text(connection.modelAdditionError(newModelName) ?? "点击添加后，再保存配置。")
+                    Text(connection.modelAdditionError(newModelName) ?? "模型尚未添加")
                         .font(.caption).foregroundStyle(TandemStyle.secondary)
                 }
             }

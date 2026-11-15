@@ -3,6 +3,20 @@ import SwiftUI
 @testable import TandemApp
 
 final class ControlLayoutTests: XCTestCase {
+    func testComposerControlsShareCompactHeight() async throws {
+        try await MainActor.run {
+            let send = Button {} label: {
+                Image(systemName: "arrow.up").font(.system(size: 14, weight: .semibold)).frame(width: 16, height: 16)
+            }.buttonStyle(TandemButtonStyle(.primary)).controlSize(.small).fixedSize()
+            let menu = TandemMenuLabel { Text("默认 · model-a") }.controlSize(.small).fixedSize()
+            let sendImage = try XCTUnwrap(ImageRenderer(content: send).cgImage)
+            let menuImage = try XCTUnwrap(ImageRenderer(content: menu).cgImage)
+            XCTAssertEqual(sendImage.width, 32)
+            XCTAssertEqual(sendImage.height, 32)
+            XCTAssertEqual(menuImage.height, sendImage.height)
+        }
+    }
+
     func testMenuTriggerKeepsItsIntrinsicWidth() async {
         await MainActor.run {
             let label = TandemMenuLabel { Label("新话题", systemImage: "square.and.pencil") }.fixedSize()
