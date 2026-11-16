@@ -5,12 +5,14 @@ struct ConversationNavigation: View {
     let messages: [TimelineMessage]
     let visibleSequence: Int?
     let maximumHeight: CGFloat
+    var isAtBottom = false
     var jump: (Int) -> Void
     @State private var hoveredID: String?
 
     // shortcut: Navigation covers loaded messages; add a summary query if full-history navigation is needed.
     var entries: [TimelineMessage] { messages.filter { $0.role == "user" } }
     var activeMessageID: String? {
+        if isAtBottom { return entries.last?.id }
         guard let visibleSequence else { return nil }
         return entries.last { $0.sequence <= visibleSequence }?.id
     }

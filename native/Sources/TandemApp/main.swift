@@ -274,13 +274,21 @@ func smokeTest() async {
               let protection = restoration["protectionPath"] as? String,
               FileManager.default.fileExists(atPath: protection + "/config.json"),
               try String(contentsOf: source, encoding: .utf8) == "原生读取资料\n第二行" else { throw IPCError.response }
+        let reopenedWindow = AssistantModel(runtime: runtime)
+        let reopenedPolling = Task { await reopenedWindow.poll(surfaceId: "smoke") }
+        defer { reopenedPolling.cancel() }
+        try await waitFor { reopenedWindow.snapshot != nil }
+        guard reopenedWindow.messages.first?.sequence != 1 else { throw IPCError.response }
+        await reopenedWindow.loadHistory(through: 1)
+        guard reopenedWindow.messages.first?.sequence == 1, reopenedWindow.messages.count > 10 else { throw IPCError.response }
+        reopenedPolling.cancel()
         polling.cancel()
         otherPolling.cancel()
         await runtime.stop()
         try await Task.sleep(for: .seconds(2))
         guard runtime.nodePID == 0, kill(lastPID, 0) == -1, errno == ESRCH else { throw IPCError.peer }
         try? FileManager.default.removeItem(at: sandbox)
-        print("PASS Swift → Node: three-API chat, M2 routing/correction, M3 native Task, M4 memory, Core backup/restore/forget protection/two-window reload, persistence, reconnect, crash restart, quit cleanup")
+        print("PASS Swift → Node: three-API chat, M2 routing/correction, M3 native Task, M4 memory, Core backup/restore/forget protection/two-window reload, reading-anchor history reload, persistence, reconnect, crash restart, quit cleanup")
         exit(0)
     } catch {
         await runtime.stop()

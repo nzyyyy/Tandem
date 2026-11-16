@@ -23,6 +23,7 @@ struct MarkdownView: View {
         StructuredText(source, parser: ChatMarkdownParser())
             .textual.inlineStyle(InlineStyle.gitHub.link(.foregroundColor(TandemStyle.accent)))
             .textual.codeBlockStyle(ChatCodeBlockStyle())
+            .textual.tableStyle(ChatTableStyle())
             .textual.structuredTextStyle(.gitHub)
             .textual.textSelection(.enabled)
             .font(.system(size: 15)).foregroundStyle(TandemStyle.ink)
@@ -30,6 +31,38 @@ struct MarkdownView: View {
             .environment(\.openURL, OpenURLAction { url in
                 ChatMarkdownParser.allows(url) ? .systemAction(url) : .discarded
             })
+    }
+}
+
+struct ChatTableStyle: StructuredText.TableStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .textual.tableCellSpacing(horizontal: 1, vertical: 1)
+            .textual.blockSpacing(.init(top: 0, bottom: 16))
+            .textual.tableBackground { layout in
+                Canvas { context, _ in
+                    if !layout.rowIndices.isEmpty {
+                        context.fill(Path(layout.rowBounds(0).integral), with: .color(TandemStyle.surface))
+                    }
+                }
+            }
+            .textual.tableOverlay { layout in
+                Canvas { context, _ in
+                    // Grid spacing can expand during layout; it must not determine the line width.
+                    for row in layout.rowIndices.dropFirst() {
+                        let y = ((layout.rowBounds(row - 1).maxY + layout.rowBounds(row).minY) / 2).rounded(.down)
+                        context.fill(Path(CGRect(x: layout.bounds.minX, y: y, width: layout.bounds.width, height: 1)),
+                                     with: .color(TandemStyle.border))
+                    }
+                    for column in layout.columnIndices.dropFirst() {
+                        let x = ((layout.columnBounds(column - 1).maxX + layout.columnBounds(column).minX) / 2).rounded(.down)
+                        context.fill(Path(CGRect(x: x, y: layout.bounds.minY, width: 1, height: layout.bounds.height)),
+                                     with: .color(TandemStyle.border))
+                    }
+                }
+            }
+            .padding(1)
+            .border(TandemStyle.border, width: 1)
     }
 }
 

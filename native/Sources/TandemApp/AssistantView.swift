@@ -4,7 +4,11 @@ import TandemCore
 struct AssistantView: View {
     @StateObject private var model: AssistantModel
     @ObservedObject private var runtime: RuntimeSupervisor
-    @SceneStorage("tandem.surfaceId") private var surfaceId = UUID().uuidString
+    @SceneStorage("tandem.surfaceId") private var surfaceId = ""
+    @Environment(\.controlActiveState) private var controlActiveState
+    @State private var claimedSurface = false
+    @State private var readingPositionReady = false
+    @State private var scrollPosition = ScrollPosition(edge: .bottom)
     @State private var navigation = EditorSelection(value: "assistant")
     @State private var hasUnsavedChanges = false
     @State private var editorBusy = false
@@ -13,8 +17,6 @@ struct AssistantView: View {
     @State private var showDiagnostics = false
     @State private var filterProject = "*"
     @State private var detailMessageId: String?
-    @State private var visibleSequences: [Int] = []
-    @State private var isNearBottom = true
     @SwiftUI.FocusState private var composerFocused: Bool
 
     init(runtime: RuntimeSupervisor) {
@@ -86,9 +88,17 @@ struct AssistantView: View {
         .frame(minWidth: 860, minHeight: 600)
         .defaultFocus($composerFocused, true)
         .task {
+            if !claimedSurface {
+                surfaceId = ConversationPositionStore.shared.claimSurface(preferred: surfaceId)
+                claimedSurface = true
+            }
+            if controlActiveState == .key { ConversationPositionStore.shared.activate(surfaceId) }
             await Task.yield()
             composerFocused = true
             await model.poll(surfaceId: surfaceId)
+        }
+        .onChange(of: controlActiveState) { _, state in
+            if state == .key { ConversationPositionStore.shared.activate(surfaceId) }
         }
         .onChange(of: navigation.value) { _, _ in
             hasUnsavedChanges = false
@@ -133,85 +143,87 @@ struct AssistantView: View {
             }
             .padding(.horizontal, 32).padding(.vertical, 16)
             GeometryReader { geometry in
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 32) {
-                            if model.hasMore { Button("加载更早的消息") { Task { await model.loadEarlier() } }.frame(maxWidth: .infinity) }
-                            if model.snapshot == nil {
-                                VStack(alignment: .leading, spacing: 16) {
-                                    if let error = model.error {
-                                        Label("暂时无法载入对话", systemImage: "exclamationmark.triangle").font(.headline)
-                                        Text(error).font(.callout).foregroundStyle(TandemStyle.secondary)
-                                        Button("重试加载") { Task { await model.refresh() } }
-                                    } else {
-                                        ProgressView(runtime.isConnected ? "正在载入对话…" : "正在启动本地运行环境…")
-                                        Text(runtime.status).font(.caption).foregroundStyle(TandemStyle.secondary)
-                                    }
-                                }.padding(.top, 64)
-                            } else if model.messages.isEmpty && model.snapshot?.pendingInteractions.isEmpty == true {
-                                VStack(alignment: .leading, spacing: 16) {
-                                    Image(systemName: "circle.lefthalf.filled").font(.system(size: 28)).foregroundStyle(TandemStyle.accent)
-                                    Text("从一个想法开始").font(.system(size: 28, weight: .semibold))
-                                    if model.snapshot?.models.isEmpty == true { Button("配置第一个模型") { navigate("settings") }.buttonStyle(TandemButtonStyle(.primary)) }
-                                }.padding(.top, 64)
-                            } else if timelineSequences.isEmpty {
-                                Text("此项目暂无消息").foregroundStyle(TandemStyle.secondary).padding(.top, 64)
-                            }
-                            ForEach(timelineSequences, id: \.self) { sequence in
+                ConversationScrollView(position: $scrollPosition,
+                                       messages: model.messages.filter { filterProject == "*" || ($0.projectId ?? "") == filterProject },
+                                       lastSequence: model.messages.last.flatMap { timelineSequences.contains($0.sequence) ? $0.sequence : nil },
+                                       ready: readingPositionReady && navigation.value == "assistant", sending: model.sending,
+                                       navigationHeight: max(0, geometry.size.height - 24), savePosition: saveReadingPosition) {
+                    LazyVStack(alignment: .leading, spacing: 32) {
+                        if model.hasMore { Button("加载更早的消息") { Task { await model.loadEarlier() } }.frame(maxWidth: .infinity) }
+                        if model.snapshot == nil {
+                            VStack(alignment: .leading, spacing: 16) {
+                                if let error = model.error {
+                                    Label("暂时无法载入对话", systemImage: "exclamationmark.triangle").font(.headline)
+                                    Text(error).font(.callout).foregroundStyle(TandemStyle.secondary)
+                                    Button("重试加载") { Task { await model.refresh() } }
+                                } else {
+                                    ProgressView(runtime.isConnected ? "正在载入对话…" : "正在启动本地运行环境…")
+                                    Text(runtime.status).font(.caption).foregroundStyle(TandemStyle.secondary)
+                                }
+                            }.padding(.top, 64)
+                        } else if model.messages.isEmpty && model.snapshot?.pendingInteractions.isEmpty == true {
+                            VStack(alignment: .leading, spacing: 16) {
+                                Image(systemName: "circle.lefthalf.filled").font(.system(size: 28)).foregroundStyle(TandemStyle.accent)
+                                Text("从一个想法开始").font(.system(size: 28, weight: .semibold))
+                                if model.snapshot?.models.isEmpty == true { Button("配置第一个模型") { navigate("settings") }.buttonStyle(TandemButtonStyle(.primary)) }
+                            }.padding(.top, 64)
+                        } else if timelineSequences.isEmpty {
+                            Text("此项目暂无消息").foregroundStyle(TandemStyle.secondary).padding(.top, 64)
+                        }
+                        // Lazy scroll lookup needs a stable outer view before a message has been measured.
+                        ForEach(timelineSequences, id: \.self) { sequence in
+                            VStack(spacing: 20) {
                                 if let message = model.messages.first(where: { $0.sequence == sequence }) {
-                                    VStack(spacing: 20) {
-                                        if let boundary = boundaryTitle(for: message) {
-                                            HStack(spacing: 12) {
-                                                Rectangle().fill(TandemStyle.border).frame(height: 1)
-                                                Text(boundary).font(.caption).foregroundStyle(TandemStyle.secondary).lineLimit(1)
-                                                    .fixedSize(horizontal: false, vertical: true)
-                                                Rectangle().fill(TandemStyle.border).frame(height: 1)
-                                            }.padding(.vertical, 4)
-                                        }
-                                        MessageView(message: message, model: model,
-                                                    maximumWidth: max(1, min(724, geometry.size.width - 64)) * 0.7) {
-                                            detailMessageId = message.id
-                                        }
-                                    }.id(sequence)
+                                    if let boundary = boundaryTitle(for: message) {
+                                        HStack(spacing: 12) {
+                                            Rectangle().fill(TandemStyle.border).frame(height: 1)
+                                            Text(boundary).font(.caption).foregroundStyle(TandemStyle.secondary).lineLimit(1)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                            Rectangle().fill(TandemStyle.border).frame(height: 1)
+                                        }.padding(.vertical, 4)
+                                    }
+                                    MessageView(message: message, model: model,
+                                                maximumWidth: max(1, min(724, geometry.size.width - 64)) * 0.7) {
+                                        detailMessageId = message.id
+                                    }
                                 } else if let pending = model.snapshot?.pendingInteractions.first(where: { $0.sequence == sequence }) {
-                                    PendingInteractionView(interaction: pending, model: model).id(sequence)
+                                    PendingInteractionView(interaction: pending, model: model)
                                 }
+                            }.conversationMessageTarget(sequence)
+                        }
+                        ApprovalCards(model: model)
+                        ForEach(model.snapshot?.activity.runs.filter { $0.status == "paused" } ?? []) { run in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("执行预算已用尽：\(run.steps)/\(run.step_limit) 步 · \(run.tokens)/\(run.token_limit) Token · \(run.active_ms / 1000)/\(run.time_limit / 1000) 秒")
+                                Button("在 Activity 查看进度与追加预算") { navigate("activity") }
                             }
-                            ApprovalCards(model: model)
-                            ForEach(model.snapshot?.activity.runs.filter { $0.status == "paused" } ?? []) { run in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("执行预算已用尽：\(run.steps)/\(run.step_limit) 步 · \(run.tokens)/\(run.token_limit) Token · \(run.active_ms / 1000)/\(run.time_limit / 1000) 秒")
-                                    Button("在 Activity 查看进度与追加预算") { navigate("activity") }
-                                }
-                            }
-                            Color.clear.frame(height: 1).id("bottom")
                         }
-                        .scrollTargetLayout()
-                        .frame(maxWidth: 724, alignment: .leading)
-                        .padding(.horizontal, 32).padding(.vertical, 24)
-                        .frame(maxWidth: .infinity)
+                        Color.clear.frame(height: 1).id("bottom")
                     }
-                    .onScrollGeometryChange(for: Bool.self) { geometry in
-                        geometry.contentSize.height - geometry.visibleRect.maxY < 80
-                    } action: { _, nearBottom in
-                        if navigation.value == "assistant" { isNearBottom = nearBottom }
+                    .scrollTargetLayout()
+                    .frame(maxWidth: 724, alignment: .leading)
+                    .padding(.horizontal, 32).padding(.vertical, 24)
+                    .frame(maxWidth: .infinity)
+                }
+                .task(id: model.snapshot?.generation) {
+                    guard let generation = model.snapshot?.generation else { return }
+                    readingPositionReady = false
+                    let saved = ConversationPositionStore.shared.position(for: surfaceId, generation: generation)
+                    if let filter = saved?.projectFilter,
+                       filter == "*" || filter.isEmpty || model.snapshot?.projects.contains(where: { $0.id == filter }) == true {
+                        filterProject = filter
                     }
-                    .onScrollTargetVisibilityChange(idType: Int.self, threshold: 0.01) { sequences in
-                        if navigation.value == "assistant" { visibleSequences = sequences }
+                    if let saved, !saved.atBottom {
+                        await model.loadHistory(through: saved.sequence)
                     }
-                    .onChange(of: model.messages.last?.id) { _, _ in
-                        if navigation.value == "assistant", isNearBottom || model.sending,
-                           let sequence = model.messages.last?.sequence, timelineSequences.contains(sequence) {
-                            proxy.scrollTo("bottom", anchor: .bottom)
-                        }
+                    guard !Task.isCancelled, model.snapshot?.generation == generation else { return }
+                    await Task.yield()
+                    if let saved, !saved.atBottom, timelineSequences.contains(saved.sequence) {
+                        scrollPosition.scrollTo(id: saved.sequence, anchor: .top)
+                    } else {
+                        scrollPosition.scrollTo(edge: .bottom)
                     }
-                    .overlay(alignment: .leading) {
-                        ConversationNavigation(messages: model.messages.filter { filterProject == "*" || ($0.projectId ?? "") == filterProject },
-                                               visibleSequence: visibleSequences.min(), maximumHeight: max(0, geometry.size.height - 24)) { sequence in
-                            withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(sequence, anchor: .top) }
-                        }
-                        .padding(.leading, 4)
-                    }
+                    readingPositionReady = true
                 }
             }
             composer
@@ -226,6 +238,13 @@ struct AssistantView: View {
         .onChange(of: model.messages.map(\.id)) { _, ids in
             if let id = detailMessageId, !ids.contains(id) { detailMessageId = nil }
         }
+    }
+
+    private func saveReadingPosition(_ viewport: ConversationViewport) {
+        guard readingPositionReady, navigation.value == "assistant",
+              let generation = model.snapshot?.generation, let sequence = viewport.visibleSequence else { return }
+        ConversationPositionStore.shared.save(.init(generation: generation, sequence: sequence,
+                                                     atBottom: viewport.isNearBottom, projectFilter: filterProject), for: surfaceId)
     }
 
     private var topicTitle: some View {

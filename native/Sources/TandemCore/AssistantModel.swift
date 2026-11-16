@@ -328,6 +328,14 @@ public final class AssistantModel: ObservableObject {
         } catch { show(error) }
     }
 
+    public func loadHistory(through sequence: Int) async {
+        // shortcut: restore reads existing pages one at a time; batch reads if deep-history startup becomes slow.
+        while !Task.isCancelled, hasMore, let first = messages.first, first.sequence > sequence {
+            await loadEarlier()
+            guard messages.first?.sequence != first.sequence else { return }
+        }
+    }
+
     private func selectionPayload() -> Any {
         guard !selectedModel.isEmpty else { return NSNull() }
         let components = selectedModel.split(separator: "\u{0}", omittingEmptySubsequences: false)

@@ -111,4 +111,47 @@ final class MarkdownTests: XCTestCase {
         XCTAssertGreaterThan(host.fittingSize.height, 300)
         XCTAssertLessThan(host.fittingSize.height, 1500)
     }
+
+    @MainActor func testTableSeparatorsStayThinWhenGridSpacingExpands() async throws {
+        let source = """
+        | 项目 | 估算 |
+        | --- | --- |
+        | 单程（走丽泽、广安门、复兴门、长安街这条线） | 13–15 km |
+        | 直接往返 | 26–30 km |
+        | 到天安门管制边界的折返点（西单附近） | 少 1–2 km |
+        """
+        let host = NSHostingView(rootView: StructuredText(source, parser: ChatMarkdownParser())
+            .textual.tableStyle(ExpandedSpacingTableStyle()).textual.tableCellStyle(.gitHub)
+            .font(.system(size: 15)).foregroundStyle(TandemStyle.ink)
+            .padding(16).frame(width: 640).background(Color.white).environment(\.colorScheme, .light))
+        host.frame = NSRect(x: 0, y: 0, width: 640, height: 260)
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(150))
+        host.layoutSubtreeIfNeeded()
+        let image = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: image)
+        let scale = CGFloat(image.pixelsWide) / host.bounds.width
+        var widest = 0, consecutive = 0, separators = 0
+        for y in 0..<image.pixelsHigh {
+            let colored = (0..<image.pixelsWide).filter { x in
+                guard let color = image.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { return false }
+                return (0.75...0.94).contains(color.redComponent)
+                    && (0.75...0.94).contains(color.greenComponent)
+                    && (0.75...0.95).contains(color.blueComponent)
+            }.count
+            if colored > image.pixelsWide / 2 {
+                if consecutive == 0 { separators += 1 }
+                consecutive += 1; widest = max(widest, consecutive)
+            } else { consecutive = 0 }
+        }
+        XCTAssertGreaterThanOrEqual(separators, 3, "The rendered table must have visible row dividers.")
+        XCTAssertLessThanOrEqual(CGFloat(widest) / scale, 2, "Cell spacing must not become a solid border band.")
+    }
+}
+
+private struct ExpandedSpacingTableStyle: StructuredText.TableStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        ChatTableStyle().makeBody(configuration: configuration)
+            .textual.tableCellSpacing(horizontal: 8, vertical: 8)
+    }
 }
