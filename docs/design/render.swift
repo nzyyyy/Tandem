@@ -1,5 +1,6 @@
 import AppKit
 
+// Historical: renders the pre-Electron SwiftUI design proposals. Kept for reference only.
 // Static, native-drawn design artifacts. Run from the repository root.
 let W: CGFloat = 1440, H: CGFloat = 1040
 let ink = "263334", muted = "657273", faint = "758080"

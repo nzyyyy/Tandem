@@ -1,5 +1,5 @@
 import { createRoot } from "react-dom/client";
-import { App } from "./App.tsx";
+import { App } from "./app.tsx";
 import { AssistantStore, StoreContext } from "./store.tsx";
 import "./style.css";
 const root = createRoot(document.getElementById("root")!);

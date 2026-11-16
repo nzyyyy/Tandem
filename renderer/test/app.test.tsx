@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Tooltip } from "radix-ui";
-import { App } from "../App.tsx";
+import { App } from "../app.tsx";
 import { Settings, modelAdditionError, providerName } from "../settings.tsx";
 import { Markdown } from "../components/markdown.tsx";
 import { AssistantStore, StoreContext } from "../store.tsx";

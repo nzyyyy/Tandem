@@ -1,5 +1,7 @@
 # Tandem UI 视觉提案
 
+> 历史记录：本提案基于迁移前的 SwiftUI 实现；当前应用为 Electron + React，`render.swift` 仅用于复现早期设计稿。当前实现见 [Electron 迁移与验收](../Electron_迁移与验收.md)。
+
 设计稿基于 M2 功能和 SwiftUI 结构；已按此提案完成原生界面实现。三张图均为 2880 × 2080 PNG，窗口按 1312 × 820 pt 设计，周围底色、标题和说明属于展示画板，不进入应用。
 
 - [对话](01-conversation.png)

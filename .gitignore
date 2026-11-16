@@ -1,6 +1,5 @@
 node_modules/
 .pnpm-store/
 dist/
-native/.build/
 .DS_Store
 .codegraph
