@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import type { Preferences } from "../shared/bridge.ts";
 import { useAssistant } from "./store.tsx";
-import { Conversation } from "./conversation.tsx";
+import { Conversation } from "./conversation/index.tsx";
 import { Settings } from "./settings.tsx";
 import { Projects } from "./projects.tsx";
 import { Memory } from "./memory.tsx";

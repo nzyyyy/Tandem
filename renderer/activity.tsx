@@ -6,7 +6,8 @@ import { errorText } from "../shared/errors.ts";
 import { Button, Field, Header, Modal, Notice } from "./components/ui.tsx";
 import { Markdown } from "./components/markdown.tsx";
 import { useAction } from "./components/actions.ts";
-import { Approvals, ContextFragments } from "./conversation.tsx";
+import { Approvals } from "./components/approvals.tsx";
+import { ContextFragments } from "./components/context-fragments.tsx";
 
 function strings(value: string | null) {
   try {

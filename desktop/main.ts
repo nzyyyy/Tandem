@@ -293,7 +293,7 @@ else {
       runtime.start();
       if (testing) {
         try {
-          const { selfTest } = await import("./self-test.ts");
+          const { selfTest } = await import("./e2e/self-test.ts");
           await selfTest(
             runtime,
             createWindow,

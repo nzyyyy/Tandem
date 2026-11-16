@@ -1,8 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, closeSync, fsyncSync, openSync } from 'node:fs';
-import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { privateDirectory, redact } from './config.ts';
+import { redact } from './config.ts';
 import type { AppConfig } from './config.ts';
 import { requireValue, text } from './errors.ts';
 import type { Store } from './store.ts';
@@ -15,27 +12,6 @@ const predicate = (s: string) => /^(数据库|存储方案|存储|database)$/i.t
 const key = (subject: string, relation: string) => digest(normalize(subject) + '\0' + predicate(relation));
 const words = (s: string) => [...new Set([...new Intl.Segmenter('zh', {granularity:'word'}).segment(s.toLowerCase())].filter(x=>x.isWordLike).map(x=>x.segment))].slice(0,64);
 const sensitive = (s: string) => /\[REDACTED\]|密码|密钥|凭据|身份证|银行卡|病历|诊断|住址|手机号|电话|邮箱|健康|宗教|性取向|password|api.?key|secret|token|@|\b\d{7,}\b/i.test(s);
-
-export function migrateM4(store: Store, directory: string) {
-  const db=store.db;
-  if (Number(db.prepare('PRAGMA user_version').get()!.user_version)>=4) return;
-  const backups=join(directory,'migrations'); privateDirectory(backups);
-  const path=join(backups,`schema-3-${randomUUID()}.sqlite`);
-  db.prepare('VACUUM INTO ?').run(path); chmodSync(path,0o600);
-  const backup=new DatabaseSync(path,{readOnly:true});
-  try { requireValue(backup.prepare('PRAGMA quick_check').get()!.quick_check==='ok' && backup.prepare('PRAGMA user_version').get()!.user_version===3 && backup.prepare('PRAGMA foreign_key_check').all().length===0,'MIGRATION_BACKUP_INVALID'); }
-  finally { backup.close(); }
-  const fd=openSync(path,'r'); try { fsyncSync(fd); } finally { closeSync(fd); }
-  store.transaction(()=>db.exec(`
-    CREATE TABLE memories(id TEXT PRIMARY KEY,kind TEXT NOT NULL CHECK(kind IN('fact','decision')),subject TEXT NOT NULL,predicate TEXT NOT NULL,content TEXT NOT NULL,key_hash TEXT NOT NULL,project_id TEXT REFERENCES projects(id),status TEXT NOT NULL CHECK(status IN('candidate','active','superseded','suspended')),origin TEXT NOT NULL,confirmed_at INTEGER,supersedes_id TEXT REFERENCES memories(id) ON DELETE SET NULL,rationale TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
-    CREATE UNIQUE INDEX memory_current ON memories(COALESCE(project_id,''),key_hash) WHERE status='active';
-    CREATE TABLE memory_evidence(memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,message_id TEXT NOT NULL REFERENCES messages(id),interaction_id TEXT NOT NULL REFERENCES interactions(id),interaction_version INTEGER NOT NULL,project_id TEXT,valid INTEGER NOT NULL CHECK(valid IN(0,1)),confirmed INTEGER NOT NULL CHECK(confirmed IN(0,1)),PRIMARY KEY(memory_id,message_id));
-    CREATE TABLE memory_forget_markers(id TEXT PRIMARY KEY,scope TEXT NOT NULL,key_hash TEXT NOT NULL,evidence_ids TEXT NOT NULL,created_at INTEGER NOT NULL,released_at INTEGER);
-    CREATE TABLE memory_outbox(id TEXT PRIMARY KEY,memory_id TEXT NOT NULL,kind TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN('pending','done')),created_at INTEGER NOT NULL);
-    CREATE VIRTUAL TABLE memory_search USING fts5(memory_id UNINDEXED,content);
-    PRAGMA user_version=4;
-  `));
-}
 
 export function memoryFragmentValid(store: Store, f: Row, scope?: Row, visited=new Set<string>()): boolean {
   if (scope && !memoryScopeAllowed(f,scope.projectId,scope.mode)) return false;

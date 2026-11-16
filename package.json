@@ -10,11 +10,11 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.check.json && tsc -p tsconfig.desktop.json --noEmit && tsc -p tsconfig.renderer.json",
-    "test": "node --test runtime/test/*.test.ts desktop/test/*.test.ts && vitest run && node scripts/smoke.mjs",
+    "test": "node --test runtime/test/*.test.ts desktop/test/*.test.ts shared/test/*.test.ts && vitest run && node scripts/smoke.mjs",
     "dev": "node scripts/launch.mjs",
     "test:lifecycle": "pnpm run build && node scripts/lifecycle.mjs",
     "test:bundle": "node scripts/smoke.mjs --bundled",
-    "test:unit": "node --test runtime/test/*.test.ts desktop/test/*.test.ts && vitest run",
+    "test:unit": "node --test runtime/test/*.test.ts desktop/test/*.test.ts shared/test/*.test.ts && vitest run",
     "test:smoke": "node scripts/smoke.mjs"
   },
   "devDependencies": {

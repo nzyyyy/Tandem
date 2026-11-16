@@ -1,10 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
-import { chmodSync, closeSync, existsSync, fsyncSync, lstatSync, openSync, renameSync, unlinkSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { privateDirectory } from './config.ts';
-import { migrateM3 } from './execution.ts';
-import { migrateM4 } from './memory.ts';
+import { migrate } from './migrations.ts';
 import { requireValue } from './errors.ts';
 
 export class Store {
@@ -16,83 +15,7 @@ export class Store {
     this.db = new DatabaseSync(path);
     chmodSync(path, 0o600);
     this.db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000;');
-    const version = this.db.prepare('PRAGMA user_version').get()!.user_version;
-    requireValue(version === 0 || version === 1 || version === 2 || version === 3 || version === 4, 'DATABASE_VERSION');
-    if (version === 0) this.transaction(() => {
-      this.db.exec(`
-        CREATE TABLE timelines(id TEXT PRIMARY KEY CHECK(id='main'), next_sequence INTEGER NOT NULL);
-        INSERT INTO timelines VALUES('main', 1);
-        CREATE TABLE sessions(id TEXT PRIMARY KEY, title TEXT NOT NULL, temporary INTEGER NOT NULL CHECK(temporary IN(0,1)), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
-        CREATE TABLE focus_states(surface_id TEXT PRIMARY KEY, active_session_id TEXT REFERENCES sessions(id), interrupted_session_id TEXT REFERENCES sessions(id), version INTEGER NOT NULL DEFAULT 1);
-        CREATE TABLE messages(id TEXT PRIMARY KEY, timeline_id TEXT NOT NULL DEFAULT 'main' REFERENCES timelines(id), session_id TEXT NOT NULL REFERENCES sessions(id), sequence INTEGER NOT NULL UNIQUE, role TEXT NOT NULL CHECK(role IN('user','assistant')), content TEXT NOT NULL, run_id TEXT REFERENCES runs(id), created_at INTEGER NOT NULL);
-        CREATE TABLE runs(id TEXT PRIMARY KEY, user_message_id TEXT NOT NULL REFERENCES messages(id), assistant_message_id TEXT REFERENCES messages(id), session_id TEXT NOT NULL REFERENCES sessions(id), binding_json TEXT NOT NULL, context_json TEXT, status TEXT NOT NULL CHECK(status IN('queued','running','completed','failed','interrupted','cancelled')), error_code TEXT, attempt INTEGER NOT NULL, retry_of TEXT UNIQUE REFERENCES runs(id), request_key TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL, created_at INTEGER NOT NULL);
-        CREATE INDEX messages_session_sequence ON messages(session_id, sequence);
-        CREATE INDEX runs_queue ON runs(status, created_at);
-        CREATE TABLE events(sequence INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,schema_version INTEGER NOT NULL,type TEXT NOT NULL,aggregate_id TEXT NOT NULL,correlation_id TEXT NOT NULL,causation_id TEXT,occurred_at INTEGER NOT NULL,payload_ref TEXT NOT NULL);
-        CREATE INDEX events_aggregate_sequence ON events(aggregate_id,sequence);
-        PRAGMA user_version=1;
-      `);
-    });
-    try {
-      if (version === 1) {
-        const backups = join(directory,'migrations'); privateDirectory(backups);
-        const backupPath = join(backups,`schema-1-${randomUUID()}.sqlite`);
-        const temporary = backupPath + '.tmp';
-        closeSync(openSync(temporary,'wx',0o600));
-        try {
-          // VACUUM INTO includes committed WAL contents in a consistent standalone database.
-          this.db.prepare('VACUUM INTO ?').run(temporary);
-          const check = new DatabaseSync(temporary,{readOnly:true});
-          try {
-            requireValue(check.prepare('PRAGMA quick_check').get()!.quick_check === 'ok'
-              && check.prepare('PRAGMA foreign_key_check').all().length === 0
-              && check.prepare('PRAGMA user_version').get()!.user_version === 1,'MIGRATION_BACKUP_INVALID');
-          } finally { check.close(); }
-          const fd = openSync(temporary,'r');
-          try { fsyncSync(fd); } finally { closeSync(fd); }
-          renameSync(temporary,backupPath);
-        } finally { if(existsSync(temporary)) unlinkSync(temporary); }
-      }
-      if (Number(version) < 2) this.transaction(() => {
-        this.db.exec(`
-          CREATE TABLE projects(id TEXT PRIMARY KEY,title TEXT NOT NULL,description TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN('open','archived')),version INTEGER NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
-          ALTER TABLE sessions ADD COLUMN project_id TEXT REFERENCES projects(id);
-          ALTER TABLE sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'open';
-          ALTER TABLE focus_states ADD COLUMN active_project_id TEXT REFERENCES projects(id);
-          ALTER TABLE focus_states ADD COLUMN context_mode TEXT NOT NULL DEFAULT 'automatic';
-          ALTER TABLE focus_states ADD COLUMN recent_session_ids TEXT NOT NULL DEFAULT '[]';
-          CREATE TABLE interactions(id TEXT PRIMARY KEY,timeline_id TEXT NOT NULL DEFAULT 'main',sequence INTEGER NOT NULL UNIQUE,surface_id TEXT NOT NULL,input TEXT NOT NULL,input_json TEXT NOT NULL,request_key TEXT NOT NULL UNIQUE,request_hash TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN('received','waiting_route','committed')),version INTEGER NOT NULL DEFAULT 1,project_id TEXT REFERENCES projects(id),session_id TEXT REFERENCES sessions(id),message_id TEXT UNIQUE REFERENCES messages(id),route_json TEXT,focus_version INTEGER NOT NULL,created_at INTEGER NOT NULL);
-          ALTER TABLE messages ADD COLUMN interaction_id TEXT REFERENCES interactions(id);
-          CREATE UNIQUE INDEX messages_interaction ON messages(interaction_id) WHERE interaction_id IS NOT NULL;
-          ALTER TABLE runs ADD COLUMN interaction_id TEXT REFERENCES interactions(id);
-          ALTER TABLE runs ADD COLUMN interaction_version INTEGER;
-          ALTER TABLE runs ADD COLUMN project_id TEXT REFERENCES projects(id);
-          ALTER TABLE runs ADD COLUMN context_mode TEXT NOT NULL DEFAULT 'automatic';
-          ALTER TABLE runs ADD COLUMN snapshot_id TEXT REFERENCES context_snapshots(id);
-          CREATE TABLE context_snapshots(id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id),mode TEXT NOT NULL,project_id TEXT REFERENCES projects(id),fragments_json TEXT NOT NULL,created_at INTEGER NOT NULL);
-          CREATE TABLE corrections(id TEXT PRIMARY KEY,interaction_id TEXT NOT NULL REFERENCES interactions(id),from_project TEXT,to_project TEXT,version INTEGER NOT NULL,created_at INTEGER NOT NULL);
-          CREATE TABLE outbox(interaction_id TEXT PRIMARY KEY REFERENCES interactions(id),kind TEXT NOT NULL CHECK(kind IN('route','run')),status TEXT NOT NULL CHECK(status IN('pending','done','interrupted')));
-          CREATE TABLE delete_previews(token TEXT PRIMARY KEY,project_id TEXT NOT NULL,revision TEXT NOT NULL,created_at INTEGER NOT NULL);
-          CREATE VIRTUAL TABLE session_search USING fts5(session_id UNINDEXED,content);
-          PRAGMA user_version=2;
-        `);
-        // Preserve existing message IDs, order and historical execution inputs during the M1 migration.
-        for (const m of this.db.prepare("SELECT * FROM messages WHERE role='user'").all()) {
-          const id = randomUUID();
-          this.db.prepare("INSERT INTO interactions(id,sequence,surface_id,input,input_json,request_key,request_hash,status,message_id,session_id,focus_version,created_at) VALUES(?,?,'legacy',?,'{}',?,?,'committed',?,?,1,?)")
-            .run(id,m.sequence,m.content,'legacy:'+id,'legacy',m.id,m.session_id,m.created_at);
-          this.db.prepare('UPDATE messages SET interaction_id=? WHERE id=?').run(id,m.id);
-          this.db.prepare('UPDATE runs SET interaction_id=?,interaction_version=1 WHERE user_message_id=?').run(id,m.id);
-        }
-        for (const r of this.db.prepare('SELECT * FROM runs WHERE context_json IS NOT NULL').all()) {
-          const id=randomUUID();
-          const fragments=JSON.parse(String(r.context_json)).map((m: any) => ({sourceType:'legacy_input',sourceId:String(r.id),sourceVersion:createHash('sha256').update(JSON.stringify(m)).digest('hex'),projectId:null,role:m.role,content:m.content}));
-          this.db.prepare("INSERT INTO context_snapshots VALUES(?,?,'automatic',NULL,?,?)").run(id,r.id,JSON.stringify(fragments),r.created_at);
-          this.db.prepare('UPDATE runs SET snapshot_id=? WHERE id=?').run(id,r.id);
-        }
-      });
-    } catch (error) { this.db.close(); throw error; }
-    try { migrateM3(this, directory); migrateM4(this, directory); } catch (error) { this.db.close(); throw error; }
+    try { migrate(this, directory); } catch (error) { this.db.close(); throw error; }
     this.db.exec("UPDATE outbox SET status='interrupted' WHERE status='pending';");
     // Reopening the app never restarts interrupted model work automatically.
     this.transaction(() => {

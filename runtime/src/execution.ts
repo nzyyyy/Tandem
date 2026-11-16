@@ -1,10 +1,7 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { join } from 'node:path';
-import { chmodSync, openSync, closeSync, fsyncSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
 import type { Store } from './store.ts';
 import { AppError, record, requireValue, text } from './errors.ts';
-import { privateDirectory, redact } from './config.ts';
+import { redact } from './config.ts';
 import type { AppConfig } from './config.ts';
 import type { ChatMessage, ToolCall } from './model.ts';
 import { memoryFragmentValid, memoryScopeAllowed } from './memory.ts';
@@ -18,41 +15,6 @@ export const toolDefinitions = [
   { name: 'create_task', description: '仅为用户请求的多步骤或持续工作建立任务；要求有重要歧义时先澄清。交付物和标准必须来自用户请求。', parameters: { type: 'object', properties: { deliverable: { type: 'string' }, criteria: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 12 } }, required: ['deliverable','criteria'], additionalProperties: false } },
   { name: 'complete_task', description: '对照当前修订的全部标准评估 Markdown 产物，逐项给出依据；执行器另核验工具结果及持久化引用。', parameters: { type: 'object', properties: { markdown: { type: 'string' }, evidence: { type: 'array', items: { type: 'string' } } }, required: ['markdown','evidence'], additionalProperties: false } }
 ].map(tool => ({...tool,version:1,requiredCapabilities:tool.name==='read_file'||tool.name==='list_directory'?['directory.read']:[],sideEffectClass:'none',riskLevel:tool.name==='request_directory'?'approval':'low',timeoutMs:5000,idempotencyStrategy:'invocation'}));
-
-export function migrateM3(store: Store, directory: string) {
-  const db = store.db;
-  if (Number(db.prepare('PRAGMA user_version').get()!.user_version) >= 3) return;
-  const backups = join(directory, 'migrations'); privateDirectory(backups);
-  const path = join(backups, `schema-2-${randomUUID()}.sqlite`);
-  // The private parent protects the VACUUM output until its permissions are restricted.
-  db.prepare('VACUUM INTO ?').run(path); chmodSync(path, 0o600);
-  const backup = new DatabaseSync(path, { readOnly: true });
-  try { requireValue(backup.prepare('PRAGMA quick_check').get()!.quick_check === 'ok' && backup.prepare('PRAGMA user_version').get()!.user_version === 2 && backup.prepare('PRAGMA foreign_key_check').all().length === 0, 'MIGRATION_BACKUP_INVALID'); }
-  finally { backup.close(); }
-  const descriptor = openSync(path,'r');
-  try { fsyncSync(descriptor); } finally { closeSync(descriptor); }
-  db.exec('PRAGMA foreign_keys=OFF');
-  try {
-    store.transaction(() => {
-      const sql = String(db.prepare("SELECT sql FROM sqlite_master WHERE name='runs'").get()!.sql)
-        .replace('CREATE TABLE runs', 'CREATE TABLE runs_m3').replace("'cancelled'", "'cancelled','waiting_approval','paused'");
-      db.exec(sql);
-      db.exec(`INSERT INTO runs_m3 SELECT * FROM runs; DROP TABLE runs; ALTER TABLE runs_m3 RENAME TO runs;
-        CREATE INDEX runs_queue ON runs(status,created_at);
-        CREATE TABLE run_progress(run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,version INTEGER NOT NULL DEFAULT 1,checkpoint TEXT,steps INTEGER NOT NULL DEFAULT 0,tokens INTEGER NOT NULL DEFAULT 0,active_ms INTEGER NOT NULL DEFAULT 0,step_limit INTEGER NOT NULL DEFAULT 24,token_limit INTEGER NOT NULL DEFAULT 64000,time_limit INTEGER NOT NULL DEFAULT 300000,pause_reason TEXT,estimated INTEGER NOT NULL DEFAULT 0,task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,revision INTEGER);
-        CREATE TABLE tasks(id TEXT PRIMARY KEY,project_id TEXT REFERENCES projects(id),session_id TEXT NOT NULL REFERENCES sessions(id),revision INTEGER NOT NULL,status TEXT NOT NULL,created_at INTEGER NOT NULL);
-        CREATE TABLE task_revisions(task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,revision INTEGER NOT NULL,deliverable TEXT NOT NULL,criteria TEXT NOT NULL,result_ref TEXT REFERENCES messages(id) ON DELETE SET NULL,evidence TEXT,status TEXT NOT NULL,PRIMARY KEY(task_id,revision));
-        CREATE TABLE run_steps(id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,kind TEXT NOT NULL,status TEXT NOT NULL,snapshot_id TEXT REFERENCES context_snapshots(id) ON DELETE SET NULL,detail TEXT NOT NULL,created_at INTEGER NOT NULL);
-        CREATE TABLE invocations(id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,call_id TEXT NOT NULL,name TEXT NOT NULL,tool_version INTEGER NOT NULL,args TEXT NOT NULL,args_hash TEXT NOT NULL,status TEXT NOT NULL,result TEXT,UNIQUE(run_id,call_id));
-        CREATE TABLE approvals(id TEXT PRIMARY KEY,invocation_id TEXT NOT NULL UNIQUE REFERENCES invocations(id) ON DELETE CASCADE,subject TEXT NOT NULL,scope TEXT NOT NULL,args_hash TEXT NOT NULL,tool_version INTEGER NOT NULL,expires_at INTEGER NOT NULL,status TEXT NOT NULL);
-        CREATE TABLE directory_grants(id TEXT PRIMARY KEY,project_id TEXT REFERENCES projects(id),label TEXT NOT NULL,status TEXT NOT NULL,resource_id TEXT NOT NULL);
-        CREATE TABLE budget_changes(key TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,hash TEXT NOT NULL);
-        INSERT INTO run_progress(run_id) SELECT id FROM runs;
-        PRAGMA user_version=3;`);
-      requireValue(db.prepare('PRAGMA foreign_key_check').all().length === 0, 'MIGRATION_INVALID');
-    });
-  } finally { db.exec('PRAGMA foreign_keys=ON'); }
-}
 
 export class Execution {
   readonly store: Store;
