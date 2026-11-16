@@ -1,23 +1,39 @@
 import SwiftUI
 import AppKit
 
+// 经典黑白灰配色（参考 Claude 桌面端）：浅/深色跟随窗口外观，强调色与正文同色。
 enum TandemStyle {
     private static func color(_ light: UInt32, _ dark: UInt32) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
-            let hex = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+        Color(nsColor: NSColor(name: nil) { _ in
+            // Resolve from the app appearance, not the vibrant sidebar's drawing appearance.
+            let isDark = NSApplication.shared.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            let hex = isDark ? dark : light
             return NSColor(srgbRed: CGFloat((hex >> 16) & 255) / 255,
                            green: CGFloat((hex >> 8) & 255) / 255,
                            blue: CGFloat(hex & 255) / 255, alpha: 1)
         })
     }
-    static let canvas = color(0xFFFFFF, 0x1C2422)
-    static let surface = color(0xF2F5F3, 0x242E2A)
-    static let ink = color(0x263334, 0xE4ECE7)
-    static let secondary = color(0x657273, 0xA6B5AE)
-    static let accent = color(0x23695F, 0x8BCDB8)
-    static let onAccent = color(0xFFFFFF, 0x263334)
-    static let selection = color(0xE3EEEA, 0x30463D)
-    static let border = color(0xDEE5E0, 0x46564D)
+    static let canvas = color(0xFFFFFF, 0x1F1F1F)
+    static let surface = color(0xF5F5F5, 0x2A2A2A)
+    static let hover = color(0xEDEDED, 0x353535)
+    static let ink = color(0x1A1A1A, 0xEDEDED)
+    static let secondary = color(0x6B6B6B, 0xA0A0A0)
+    static let accent = color(0x1A1A1A, 0xEDEDED)
+    static let onAccent = color(0xFFFFFF, 0x1F1F1F)
+    static let selection = color(0xE6E6E6, 0x454545)
+    static let border = color(0xE5E5E5, 0x3A3A3A)
+}
+
+// 应用外观：auto 跟随系统，其余强制浅色/深色。
+enum TandemAppearance {
+    static let key = "tandem.appearance"
+    static func apply(_ value: String) {
+        switch value {
+        case "light": NSApplication.shared.appearance = NSAppearance(named: .aqua)
+        case "dark": NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
+        default: NSApplication.shared.appearance = nil
+        }
+    }
 }
 
 struct PageHeader<Actions: View>: View {
@@ -57,7 +73,7 @@ struct SelectionRow: View {
             .foregroundStyle(selected ? TandemStyle.accent : TandemStyle.ink)
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? TandemStyle.selection : hovered ? TandemStyle.surface : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .background(selected ? TandemStyle.selection : hovered ? TandemStyle.hover : .clear, in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }
         .buttonStyle(TandemButtonStyle(.plain))
@@ -135,7 +151,7 @@ struct TandemButtonStyle: ButtonStyle {
     private var background: Color {
         switch kind {
         case .primary: return TandemStyle.accent
-        case .standard: return hovered && enabled ? TandemStyle.surface : TandemStyle.canvas
+        case .standard: return hovered && enabled ? TandemStyle.hover : TandemStyle.canvas
         case .plain: return .clear
         }
     }
@@ -155,7 +171,7 @@ struct TandemMenuLabel<Content: View>: View {
         }
         .font(.system(size: 13, weight: .medium)).foregroundStyle(TandemStyle.ink)
         .padding(.horizontal, 12).padding(.vertical, controlSize == .small ? 8 : 9)
-        .background(hovered && enabled ? TandemStyle.surface : TandemStyle.canvas, in: RoundedRectangle(cornerRadius: 8))
+        .background(hovered && enabled ? TandemStyle.hover : TandemStyle.canvas, in: RoundedRectangle(cornerRadius: 8))
         .overlay { RoundedRectangle(cornerRadius: 8).stroke(focused ? TandemStyle.accent : TandemStyle.border, lineWidth: focused ? 2 : 1) }
         .opacity(enabled ? 1 : 0.45)
         .contentShape(RoundedRectangle(cornerRadius: 8))

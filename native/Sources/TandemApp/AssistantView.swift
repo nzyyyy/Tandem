@@ -1,6 +1,17 @@
 import SwiftUI
 import TandemCore
 
+private struct AppearanceOption {
+    let value: String
+    let symbol: String
+    let title: String
+    static let all = [
+        AppearanceOption(value: "auto", symbol: "display", title: "跟随系统"),
+        AppearanceOption(value: "light", symbol: "sun.max", title: "浅色"),
+        AppearanceOption(value: "dark", symbol: "moon", title: "深色"),
+    ]
+}
+
 struct AssistantView: View {
     @StateObject private var model: AssistantModel
     @ObservedObject private var runtime: RuntimeSupervisor
@@ -17,6 +28,7 @@ struct AssistantView: View {
     @State private var showDiagnostics = false
     @State private var filterProject = "*"
     @State private var detailMessageId: String?
+    @AppStorage(TandemAppearance.key) private var appearance = "auto"
     @SwiftUI.FocusState private var composerFocused: Bool
 
     init(runtime: RuntimeSupervisor) {
@@ -56,6 +68,7 @@ struct AssistantView: View {
                 }
                 VStack(alignment: .leading, spacing: 10) {
                     Divider()
+                    appearanceSwitcher
                     Button { showDiagnostics = true } label: {
                         VStack(alignment: .leading, spacing: 8) {
                             Label("运行状态", systemImage: "waveform.path").font(.system(size: 13, weight: .medium))
@@ -105,6 +118,7 @@ struct AssistantView: View {
             composerFocused = navigation.value == "assistant"
             detailMessageId = nil
         }
+        .onChange(of: appearance) { _, value in TandemAppearance.apply(value) }
         .confirmationDialog("放弃未保存的修改？", isPresented: $confirmNavigation) {
             Button("放弃修改并离开", role: .destructive) { navigation.discard(); focusPendingSession() }
             Button("继续编辑", role: .cancel) { navigation.pending = nil; pendingSession = nil }
@@ -335,6 +349,37 @@ struct AssistantView: View {
         }
         .frame(maxWidth: 724).padding(.horizontal, 32).padding(.top, 12).padding(.bottom, 20)
         .frame(maxWidth: .infinity).background(TandemStyle.canvas)
+    }
+
+    @ViewBuilder private var appearanceSwitcher: some View {
+        if #available(macOS 26.0, *) {
+            HStack(spacing: 0) {
+                ForEach(AppearanceOption.all, id: \.value) { option in
+                    Button { appearance = option.value } label: {
+                        Image(systemName: option.symbol)
+                            .font(.system(size: 13, weight: .medium))
+                            .frame(width: 42, height: 30)
+                            .background {
+                                RoundedRectangle(cornerRadius: 9)
+                                    .fill(appearance == option.value ? Color.primary.opacity(0.14) : .clear)
+                            }
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(appearance == option.value ? TandemStyle.ink : TandemStyle.secondary)
+                    .help(option.title)
+                    .accessibilityLabel(option.title)
+                    .accessibilityAddTraits(appearance == option.value ? .isSelected : [])
+                }
+            }
+            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 9))
+        } else {
+            Picker("外观", selection: $appearance) {
+                ForEach(AppearanceOption.all, id: \.value) { Text($0.title).tag($0.value) }
+            }
+            .pickerStyle(.segmented).labelsHidden().fixedSize()
+            .accessibilityLabel("外观")
+        }
     }
 
     private var composerModelTitle: String {

@@ -111,6 +111,7 @@ struct DiagnosticsView: View {
 
 struct TandemApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    init() { TandemAppearance.apply(UserDefaults.standard.string(forKey: TandemAppearance.key) ?? "auto") }
     var body: some Scene {
         WindowGroup("Tandem", id: "main") { AssistantView(runtime: delegate.runtime) }
             .defaultSize(width: 1280, height: 820)
