@@ -51,8 +51,7 @@ function CodeBlock({ children }: { children: ReactNode }) {
           kind="plain"
           onClick={(event) => {
             const text =
-              event.currentTarget.closest(".code-block")?.querySelector("code")
-                ?.textContent ?? "";
+              event.currentTarget.closest(".code-block")?.querySelector("code")?.textContent ?? "";
             void window.tandem.copy(text.replace(/\n$/, ""));
           }}
         >

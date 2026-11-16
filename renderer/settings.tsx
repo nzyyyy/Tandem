@@ -26,9 +26,7 @@ const emptyConfig = (): AppConfiguration => ({
   defaultModel: null,
 });
 export const providerName = (connection: ModelConnection) =>
-  (connection.name != null
-    ? connection.name.trim() || "未命名供应商"
-    : undefined) ||
+  (connection.name != null ? connection.name.trim() || "未命名供应商" : undefined) ||
   (() => {
     try {
       return new URL(connection.url).hostname;
@@ -78,9 +76,7 @@ export function Settings({
     setDrafts({});
     setNotice("");
     setSelected((previous) =>
-      document.config.modelConnections.some(
-        (connection) => connection.id === previous,
-      )
+      document.config.modelConnections.some((connection) => connection.id === previous)
         ? previous
         : (document.config.modelConnections[0]?.id ?? ""),
     );
@@ -99,14 +95,11 @@ export function Settings({
   }, [snapshot?.generation]);
   useEffect(
     () => () => {
-      if (preview)
-        void rpc("backup.cancel", { token: preview.token }).catch(() => {});
+      if (preview) void rpc("backup.cancel", { token: preview.token }).catch(() => {});
     },
     [preview?.token],
   );
-  const current = config.modelConnections.find(
-    (connection) => connection.id === selected,
-  );
+  const current = config.modelConnections.find((connection) => connection.id === selected);
   const update = (patch: Partial<ModelConnection>) =>
     setConfig((value) => ({
       ...value,
@@ -118,26 +111,20 @@ export function Settings({
     setConfig((value) => ({
       ...value,
       defaultModel:
-        value.defaultModel?.connectionId === selected &&
-        value.defaultModel.modelName === name
+        value.defaultModel?.connectionId === selected && value.defaultModel.modelName === name
           ? null
           : value.defaultModel,
       modelConnections: value.modelConnections.map((connection) =>
         connection.id === selected
           ? {
               ...connection,
-              modelNames: connection.modelNames.filter(
-                (model) => model !== name,
-              ),
+              modelNames: connection.modelNames.filter((model) => model !== name),
             }
           : connection,
       ),
     }));
   const addModel = () => {
-    if (
-      current &&
-      !modelAdditionError(drafts[selected] ?? "", current.modelNames)
-    ) {
+    if (current && !modelAdditionError(drafts[selected] ?? "", current.modelNames)) {
       update({ modelNames: [...current.modelNames, drafts[selected]!.trim()] });
       setDrafts((value) => ({ ...value, [selected]: "" }));
     }
@@ -243,9 +230,7 @@ export function Settings({
                       <span>
                         {providerName(connection)}
                         <small>
-                          {connection.protocol === "anthropic"
-                            ? "Anthropic 兼容"
-                            : "OpenAI 兼容"}
+                          {connection.protocol === "anthropic" ? "Anthropic 兼容" : "OpenAI 兼容"}
                         </small>
                       </span>
                     </SelectionRow>
@@ -270,9 +255,7 @@ export function Settings({
                         aria-label="供应商名称"
                         value={current.name ?? providerName(current)}
                         placeholder="例如 OpenAI、我的模型服务"
-                        onChange={(event) =>
-                          update({ name: event.target.value })
-                        }
+                        onChange={(event) => update({ name: event.target.value })}
                       />
                     </Field>
                     <div className="form-columns">
@@ -287,17 +270,13 @@ export function Settings({
                           onChange={(protocol) =>
                             update({
                               protocol,
-                              apiType:
-                                protocol === "anthropic"
-                                  ? "messages"
-                                  : "chat_completions",
+                              apiType: protocol === "anthropic" ? "messages" : "chat_completions",
                               url:
                                 protocol === "anthropic" &&
                                 current.url === "https://api.openai.com/v1"
                                   ? "https://api.anthropic.com/v1"
                                   : protocol === "openai" &&
-                                      current.url ===
-                                        "https://api.anthropic.com/v1"
+                                      current.url === "https://api.anthropic.com/v1"
                                     ? "https://api.openai.com/v1"
                                     : current.url,
                             })
@@ -327,9 +306,7 @@ export function Settings({
                       <input
                         aria-label="API Base URL"
                         value={current.url}
-                        onChange={(event) =>
-                          update({ url: event.target.value })
-                        }
+                        onChange={(event) => update({ url: event.target.value })}
                         placeholder="https://api.example.com/v1"
                       />
                     </Field>
@@ -339,9 +316,7 @@ export function Settings({
                         autoComplete="off"
                         aria-label="API Key"
                         value={current.key}
-                        onChange={(event) =>
-                          update({ key: event.target.value })
-                        }
+                        onChange={(event) => update({ key: event.target.value })}
                         placeholder="输入 API Key"
                       />
                     </Field>
@@ -371,20 +346,13 @@ export function Settings({
                             }))
                           }
                           onKeyDown={(event) => {
-                            if (
-                              event.key === "Enter" &&
-                              !event.nativeEvent.isComposing
-                            )
-                              addModel();
+                            if (event.key === "Enter" && !event.nativeEvent.isComposing) addModel();
                           }}
                           placeholder="输入模型名，例如 model-a"
                         />
                         <Button
                           disabled={
-                            !!modelAdditionError(
-                              drafts[selected] ?? "",
-                              current.modelNames,
-                            )
+                            !!modelAdditionError(drafts[selected] ?? "", current.modelNames)
                           }
                           onClick={addModel}
                         >
@@ -394,10 +362,8 @@ export function Settings({
                       </div>
                       {drafts[selected] && (
                         <p className="caption">
-                          {modelAdditionError(
-                            drafts[selected]!,
-                            current.modelNames,
-                          ) ?? "模型尚未添加"}
+                          {modelAdditionError(drafts[selected]!, current.modelNames) ??
+                            "模型尚未添加"}
                         </p>
                       )}
                     </Field>
@@ -420,9 +386,8 @@ export function Settings({
                           return next;
                         });
                         setSelected(
-                          config.modelConnections.find(
-                            (connection) => connection.id !== selected,
-                          )?.id ?? "",
+                          config.modelConnections.find((connection) => connection.id !== selected)
+                            ?.id ?? "",
                         );
                       }}
                     >
@@ -441,8 +406,8 @@ export function Settings({
             <section className="card stack">
               <h2>备份与恢复</h2>
               <p className="caption">
-                明文备份：包含聊天、项目、记忆、证据、执行历史及受管附件。API
-                Key 会清空，外部授权目录不复制。请妥善保管备份文件。
+                明文备份：包含聊天、项目、记忆、证据、执行历史及受管附件。API Key
+                会清空，外部授权目录不复制。请妥善保管备份文件。
               </p>
               <div className="row wrap">
                 <Button
@@ -462,8 +427,7 @@ export function Settings({
                   disabled={dirty}
                   onClick={() =>
                     void run(async () => {
-                      if (preview)
-                        await rpc("backup.cancel", { token: preview.token });
+                      if (preview) await rpc("backup.cancel", { token: preview.token });
                       const result = unwrap<RestorePreview | null>(
                         await window.tandem.backup("preview"),
                       );
@@ -474,22 +438,16 @@ export function Settings({
                   选择备份并预览…
                 </Button>
               </div>
-              {dirty && (
-                <p className="caption">
-                  请先保存或放弃模型设置的修改，再进行备份或恢复。
-                </p>
-              )}
+              {dirty && <p className="caption">请先保存或放弃模型设置的修改，再进行备份或恢复。</p>}
               {preview && (
                 <div className="restore-preview stack">
                   <h3>备份预览</h3>
                   <p className="caption">
-                    {preview.createdAt} · {preview.appVersion} · Schema{" "}
-                    {preview.databaseSchema}
+                    {preview.createdAt} · {preview.appVersion} · Schema {preview.databaseSchema}
                   </p>
                   <p>
-                    {preview.messages} 条消息 · {preview.projects} 个项目 ·{" "}
-                    {preview.memories} 条记忆 · {preview.tasks} 个任务 ·{" "}
-                    {preview.attachments} 个附件
+                    {preview.messages} 条消息 · {preview.projects} 个项目 · {preview.memories}{" "}
+                    条记忆 · {preview.tasks} 个任务 · {preview.attachments} 个附件
                   </p>
                   <p className="caption">
                     恢复将替换当前全部业务数据和模型配置，切换前保留本机保护副本。当前尚未解除的遗忘标记继续生效。恢复后需重新填写
@@ -501,15 +459,13 @@ export function Settings({
                       disabled={dirty}
                       onClick={() =>
                         void run(async () => {
-                          const result = await rpc<{ protectionPath: string }>(
-                            "backup.restore",
-                            { token: preview.token, confirm: true },
-                          );
+                          const result = await rpc<{ protectionPath: string }>("backup.restore", {
+                            token: preview.token,
+                            confirm: true,
+                          });
                           setPreview(undefined);
                           await load();
-                          setNotice(
-                            `恢复完成。本机保护副本：${result.protectionPath}`,
-                          );
+                          setNotice(`恢复完成。本机保护副本：${result.protectionPath}`);
                           await store.refresh();
                         })
                       }
@@ -534,11 +490,7 @@ export function Settings({
         </div>
       </div>
       {confirmReload && (
-        <Modal
-          title="放弃修改并重新加载？"
-          busy={busy}
-          onClose={() => setConfirmReload(false)}
-        >
+        <Modal title="放弃修改并重新加载？" busy={busy} onClose={() => setConfirmReload(false)}>
           <p>将从本机配置重新读取所有接入项。</p>
           <div className="row end">
             <Button onClick={() => setConfirmReload(false)}>继续编辑</Button>

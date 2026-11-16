@@ -1,11 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  activeQuestion,
-  allowsExternal,
-  applySnapshot,
-  mergeMessages,
-} from "../conversation.ts";
+import { activeQuestion, allowsExternal, applySnapshot, mergeMessages } from "../conversation.ts";
 import type { AssistantSnapshot, TimelineMessage } from "../model.ts";
 
 test("message navigation tracks the question while reading its answer and the last question at the bottom", () => {

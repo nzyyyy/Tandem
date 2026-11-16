@@ -2,13 +2,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { resolve } from "node:path";
 import assert from "node:assert/strict";
-import {
-  cpSync,
-  mkdtempSync,
-  readdirSync,
-  realpathSync,
-  rmSync,
-} from "node:fs";
+import { cpSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { compile } from "./compile.mjs";
 import electron from "electron";
 
@@ -27,10 +21,7 @@ try {
       for (const entry of readdirSync(path, { withFileTypes: true })) {
         const child = `${path}/${entry.name}`;
         if (entry.isSymbolicLink())
-          assert.ok(
-            realpathSync(child).startsWith(`${root}/`),
-            `External bundle link: ${child}`,
-          );
+          assert.ok(realpathSync(child).startsWith(`${root}/`), `External bundle link: ${child}`);
         else if (entry.isDirectory()) checkLinks(child);
       }
     }
@@ -38,21 +29,17 @@ try {
     binary = `${app}/Contents/MacOS/Tandem`;
     args = [];
   } else compile();
-  const child = spawn(
-    binary,
-    [...args, lifecycle ? "--lifecycle-test" : "--smoke-test"],
-    {
-      cwd: directory,
-      env: {
-        ...process.env,
-        PATH: "/usr/bin:/bin",
-        NODE_PATH: "",
-        TANDEM_NODE: process.execPath,
-        TANDEM_TEST_DATA_DIR: `${directory}/live`,
-      },
-      stdio: ["ignore", "pipe", "pipe"],
+  const child = spawn(binary, [...args, lifecycle ? "--lifecycle-test" : "--smoke-test"], {
+    cwd: directory,
+    env: {
+      ...process.env,
+      PATH: "/usr/bin:/bin",
+      NODE_PATH: "",
+      TANDEM_NODE: process.execPath,
+      TANDEM_TEST_DATA_DIR: `${directory}/live`,
     },
-  );
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   let stdout = "",
     stderr = "";
   child.stdout.on("data", (chunk) => {
@@ -66,30 +53,19 @@ try {
   timer = setTimeout(() => child.kill("SIGKILL"), 90000);
   const [code] = await once(child, "exit");
   assert.equal(code, 0);
-  assert.match(
-    stdout,
-    lifecycle ? /PASS App lifecycle/ : /PASS Electron → Node/,
-  );
-  const pids = [...stderr.matchAll(/runtime_started pid=(\d+)/g)].map((match) =>
-    Number(match[1]),
-  );
+  assert.match(stdout, lifecycle ? /PASS App lifecycle/ : /PASS Electron → Node/);
+  const pids = [...stderr.matchAll(/runtime_started pid=(\d+)/g)].map((match) => Number(match[1]));
   assert.ok(pids.length > 0);
-  for (const pid of pids)
-    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+  for (const pid of pids) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
   if (lifecycle) {
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(`${directory}/live/tandem.sqlite`, {
       readOnly: true,
     });
     try {
+      assert.equal(db.prepare("SELECT status FROM tasks").get().status, "completed");
       assert.equal(
-        db.prepare("SELECT status FROM tasks").get().status,
-        "completed",
-      );
-      assert.equal(
-        db
-          .prepare("SELECT status FROM runs WHERE request_key='lifecycle-hold'")
-          .get().status,
+        db.prepare("SELECT status FROM runs WHERE request_key='lifecycle-hold'").get().status,
         "interrupted",
       );
     } finally {

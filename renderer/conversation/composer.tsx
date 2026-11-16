@@ -3,14 +3,7 @@ import { ArrowUp, Plus, SlidersHorizontal, X } from "lucide-react";
 import { useAssistant } from "../store.tsx";
 import { modelId } from "../../shared/conversation.ts";
 import { errorText } from "../../shared/errors.ts";
-import {
-  Button,
-  Menu,
-  MenuItem,
-  Notice,
-  Picker,
-  Popup,
-} from "../components/ui.tsx";
+import { Button, Menu, MenuItem, Notice, Picker, Popup } from "../components/ui.tsx";
 import { useAction } from "../components/actions.ts";
 
 function ContextControls() {
@@ -55,22 +48,20 @@ function ContextControls() {
         onChange={setProject}
         options={[
           { value: "", label: "未指定项目" },
-          ...(
-            snapshot?.projects.filter((item) => item.status === "open") ?? []
-          ).map((item) => ({ value: item.id, label: item.title })),
+          ...(snapshot?.projects.filter((item) => item.status === "open") ?? []).map((item) => ({
+            value: item.id,
+            label: item.title,
+          })),
         ]}
       />
       <p className="caption">当前：{summary}</p>
-      {mode === "isolated" && (
-        <p className="caption">仅限所选项目 · 不加载全局记忆</p>
-      )}
+      {mode === "isolated" && <p className="caption">仅限所选项目 · 不加载全局记忆</p>}
       <Button
         kind="primary"
         disabled={
           busy ||
           !focus ||
-          (mode === focus.contextMode &&
-            projectId === (focus.activeProjectId ?? ""))
+          (mode === focus.contextMode && projectId === (focus.activeProjectId ?? ""))
         }
         onClick={() =>
           void run(() =>
@@ -123,19 +114,14 @@ export function Composer({ active }: { active: boolean }) {
       label: `${option.modelName} · ${store.connectionTitle(option.connectionId)}`,
     })),
   ];
-  if (
-    selectedModel &&
-    !options.some((option) => option.value === selectedModel)
-  )
+  if (selectedModel && !options.some((option) => option.value === selectedModel))
     options.push({ value: selectedModel, label: "所选模型已失效" });
   return (
     <div className="composer-wrap">
       <div className="composer-notice">
         <Notice error>{error}</Notice>
         {!status.connected && <p className="caption">{status.status}</p>}
-        {snapshot?.configError && (
-          <Notice error>{errorText(snapshot.configError)}</Notice>
-        )}
+        {snapshot?.configError && <Notice error>{errorText(snapshot.configError)}</Notice>}
       </div>
       <div className="composer stack">
         {(createTask || newTopic || temporary) && (
@@ -166,18 +152,14 @@ export function Composer({ active }: { active: boolean }) {
               aria-label="预期交付物"
               placeholder="预期交付物"
               value={taskDeliverable}
-              onChange={(event) =>
-                store.set({ taskDeliverable: event.target.value })
-              }
+              onChange={(event) => store.set({ taskDeliverable: event.target.value })}
             />
             <textarea
               aria-label="完成标准"
               placeholder="完成标准，每行一条"
               rows={2}
               value={taskCriteria}
-              onChange={(event) =>
-                store.set({ taskCriteria: event.target.value })
-              }
+              onChange={(event) => store.set({ taskCriteria: event.target.value })}
             />
           </>
         )}
@@ -205,14 +187,10 @@ export function Composer({ active }: { active: boolean }) {
             <MenuItem onSelect={() => store.set({ createTask: !createTask })}>
               {createTask ? "✓ " : ""}持续任务
             </MenuItem>
-            <MenuItem
-              onSelect={() => store.set({ newTopic: true, temporary: false })}
-            >
+            <MenuItem onSelect={() => store.set({ newTopic: true, temporary: false })}>
               新话题
             </MenuItem>
-            <MenuItem
-              onSelect={() => store.set({ newTopic: false, temporary: true })}
-            >
+            <MenuItem onSelect={() => store.set({ newTopic: false, temporary: true })}>
               临时插话
             </MenuItem>
           </Menu>
@@ -227,9 +205,7 @@ export function Composer({ active }: { active: boolean }) {
           />
           <Button
             kind="send"
-            disabled={
-              sending || !snapshot || !status.connected || !draft.trim()
-            }
+            disabled={sending || !snapshot || !status.connected || !draft.trim()}
             aria-label="发送消息"
             title="发送消息（⌘Return）"
             onClick={() => void store.send()}

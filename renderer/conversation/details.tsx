@@ -1,22 +1,12 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
-import type {
-  CorrectionHistory,
-  RunContext,
-  TimelineMessage,
-} from "../../shared/model.ts";
+import type { CorrectionHistory, RunContext, TimelineMessage } from "../../shared/model.ts";
 import { rpc, useAssistant } from "../store.tsx";
 import { IconButton, Notice } from "../components/ui.tsx";
 import { ContextFragments } from "../components/context-fragments.tsx";
 import { CorrectMenu } from "./message.tsx";
 
-export function Details({
-  message,
-  onClose,
-}: {
-  message: TimelineMessage;
-  onClose: () => void;
-}) {
+export function Details({ message, onClose }: { message: TimelineMessage; onClose: () => void }) {
   const { snapshot, store } = useAssistant();
   const [context, setContext] = useState<RunContext>(),
     [history, setHistory] = useState<CorrectionHistory>(),
@@ -64,9 +54,8 @@ export function Details({
       <div className="inspector-content stack">
         <h3>{message.role === "user" ? "你的消息" : "Tandem 的回答"}</h3>
         <p>
-          {snapshot?.sessions.find(
-            (session) => session.id === message.sessionId,
-          )?.title ?? "历史话题"}
+          {snapshot?.sessions.find((session) => session.id === message.sessionId)?.title ??
+            "历史话题"}
         </p>
         <p className="caption">
           {message.modelName} · {store.connectionTitle(message.connectionId)}
@@ -91,9 +80,8 @@ export function Details({
             <h3>纠正记录</h3>
             {history.corrections.map((item) => (
               <p className="caption" key={item.id}>
-                {store.projectTitle(item.from_project)} →{" "}
-                {store.projectTitle(item.to_project)} · 修订 {item.version} ·{" "}
-                {new Date(item.created_at).toLocaleString()}
+                {store.projectTitle(item.from_project)} → {store.projectTitle(item.to_project)} ·
+                修订 {item.version} · {new Date(item.created_at).toLocaleString()}
               </p>
             ))}
           </>

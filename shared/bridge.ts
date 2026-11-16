@@ -29,9 +29,7 @@ export interface DesktopBridge {
   chooseDirectory(projectId: string | null, renewing?: string): Promise<Reply>;
   revokeDirectory(id: string): Promise<Reply>;
   backup(action: "export" | "preview"): Promise<Reply>;
-  preferences(
-    value: Partial<Pick<Preferences, "appearance" | "sidebarWidth">>,
-  ): Promise<void>;
+  preferences(value: Partial<Pick<Preferences, "appearance" | "sidebarWidth">>): Promise<void>;
   position(value: ConversationPosition): Promise<void>;
   openExternal(url: string): Promise<void>;
   copy(text: string): Promise<void>;

@@ -2,13 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, SquarePen } from "lucide-react";
 import { useAssistant } from "../store.tsx";
 import { activeQuestion } from "../../shared/conversation.ts";
-import {
-  Button,
-  Header,
-  Menu,
-  MenuItem,
-  Picker,
-} from "../components/ui.tsx";
+import { Button, Header, Menu, MenuItem, Picker } from "../components/ui.tsx";
 import { Approvals } from "../components/approvals.tsx";
 import { Composer } from "./composer.tsx";
 import { Message } from "./message.tsx";
@@ -22,8 +16,7 @@ export function Conversation({
   active: boolean;
   navigate: (page: string) => void;
 }) {
-  const { store, snapshot, messages, hasMore, sending, error, status } =
-    useAssistant();
+  const { store, snapshot, messages, hasMore, sending, error, status } = useAssistant();
   const [filter, setFilter] = useState("*"),
     [detailsId, setDetails] = useState<string>(),
     [ready, setReady] = useState(false),
@@ -36,10 +29,7 @@ export function Conversation({
     saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // shortcut: loaded history stays mounted for stable anchors; virtualize if deep-history profiling shows slow layout.
   const visible = useMemo(
-    () =>
-      messages.filter(
-        (message) => filter === "*" || (message.projectId ?? "") === filter,
-      ),
+    () => messages.filter((message) => filter === "*" || (message.projectId ?? "") === filter),
     [messages, filter],
   );
   const messageBySequence = useMemo(
@@ -83,8 +73,7 @@ export function Conversation({
     restored.current = generation;
     setReady(false);
     let cancelled = false;
-    const saved =
-      store.bootstrap.preferences.positions[store.bootstrap.surfaceId];
+    const saved = store.bootstrap.preferences.positions[store.bootstrap.surfaceId];
     const validSaved = saved?.generation === generation ? saved : undefined;
     const projectFilter = validSaved?.projectFilter;
     if (
@@ -110,18 +99,13 @@ export function Conversation({
         if (element) {
           const anchor =
             validSaved && !validSaved.atBottom
-              ? element.querySelector<HTMLElement>(
-                  `[data-sequence="${validSaved.sequence}"]`,
-                )
+              ? element.querySelector<HTMLElement>(`[data-sequence="${validSaved.sequence}"]`)
               : null;
           if (anchor)
             element.scrollTop +=
-              anchor.getBoundingClientRect().top -
-              element.getBoundingClientRect().top;
+              anchor.getBoundingClientRect().top - element.getBoundingClientRect().top;
           else element.scrollTop = element.scrollHeight;
-          nearBottom.current =
-            element.scrollHeight - element.clientHeight - element.scrollTop <
-            80;
+          nearBottom.current = element.scrollHeight - element.clientHeight - element.scrollTop < 80;
         }
         setReady(true);
       });
@@ -154,15 +138,12 @@ export function Conversation({
   const onScroll = () => {
     const element = scroll.current;
     if (!element || !active || !ready || !snapshot?.generation) return;
-    nearBottom.current =
-      element.scrollHeight - element.clientHeight - element.scrollTop < 80;
-    setAtBottom(
-      element.scrollHeight - element.clientHeight - element.scrollTop <= 1,
-    );
+    nearBottom.current = element.scrollHeight - element.clientHeight - element.scrollTop < 80;
+    setAtBottom(element.scrollHeight - element.clientHeight - element.scrollTop <= 1);
     const top = element.getBoundingClientRect().top;
-    const anchor = [
-      ...element.querySelectorAll<HTMLElement>("[data-sequence]"),
-    ].find((row) => row.getBoundingClientRect().bottom > top + 1);
+    const anchor = [...element.querySelectorAll<HTMLElement>("[data-sequence]")].find(
+      (row) => row.getBoundingClientRect().bottom > top + 1,
+    );
     const sequence = Number(anchor?.dataset.sequence);
     if (!sequence) return;
     setVisibleSequence(sequence);
@@ -179,14 +160,10 @@ export function Conversation({
   };
   const jump = (sequence: number) => {
     const element = scroll.current,
-      target = element?.querySelector<HTMLElement>(
-        `[data-sequence="${sequence}"]`,
-      );
+      target = element?.querySelector<HTMLElement>(`[data-sequence="${sequence}"]`);
     if (element && target) {
       nearBottom.current = false;
-      element.scrollTop +=
-        target.getBoundingClientRect().top -
-        element.getBoundingClientRect().top;
+      element.scrollTop += target.getBoundingClientRect().top - element.getBoundingClientRect().top;
       onScroll();
     }
   };
@@ -205,17 +182,12 @@ export function Conversation({
         <Header
           title="对话"
           subtitle={
-            snapshot?.sessions.find(
-              (session) => session.id === snapshot.focus.activeSessionId,
-            )?.title ?? "准备开始新话题"
+            snapshot?.sessions.find((session) => session.id === snapshot.focus.activeSessionId)
+              ?.title ?? "准备开始新话题"
           }
         >
           {snapshot?.focus.interruptedSessionId && (
-            <Button
-              onClick={() =>
-                void store.focus(snapshot.focus.interruptedSessionId!)
-              }
-            >
+            <Button onClick={() => void store.focus(snapshot.focus.interruptedSessionId!)}>
               恢复原话题
             </Button>
           )}
@@ -229,14 +201,10 @@ export function Conversation({
               </span>
             }
           >
-            <MenuItem
-              onSelect={() => store.set({ newTopic: true, temporary: false })}
-            >
+            <MenuItem onSelect={() => store.set({ newTopic: true, temporary: false })}>
               新话题
             </MenuItem>
-            <MenuItem
-              onSelect={() => store.set({ temporary: true, newTopic: false })}
-            >
+            <MenuItem onSelect={() => store.set({ temporary: true, newTopic: false })}>
               临时插话
             </MenuItem>
           </Menu>
@@ -251,8 +219,7 @@ export function Conversation({
               setFilter(value);
               nearBottom.current = true;
               requestAnimationFrame(() => {
-                if (scroll.current)
-                  scroll.current.scrollTop = scroll.current.scrollHeight;
+                if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
               });
             }}
             options={[
@@ -260,9 +227,7 @@ export function Conversation({
               { value: "", label: "未关联项目" },
               ...(snapshot?.projects ?? []).map((project) => ({
                 value: project.id,
-                label:
-                  project.title +
-                  (project.status === "archived" ? "（归档）" : ""),
+                label: project.title + (project.status === "archived" ? "（归档）" : ""),
               })),
             ]}
           />
@@ -280,15 +245,9 @@ export function Conversation({
               )}
               {!snapshot ? (
                 <div className="empty-state stack">
-                  <h2>
-                    {error ? "暂时无法载入对话" : "正在启动本地运行环境…"}
-                  </h2>
+                  <h2>{error ? "暂时无法载入对话" : "正在启动本地运行环境…"}</h2>
                   <p className="caption">{error ?? status.status}</p>
-                  {error && (
-                    <Button onClick={() => void store.refresh()}>
-                      重试加载
-                    </Button>
-                  )}
+                  {error && <Button onClick={() => void store.refresh()}>重试加载</Button>}
                 </div>
               ) : !messages.length && !pending.length ? (
                 <div className="empty-state stack">
@@ -304,20 +263,16 @@ export function Conversation({
                 <p className="empty-state caption">此项目暂无消息</p>
               ) : null}
               {sequences.map((sequence) => {
-                const { message, previous } =
-                  messageBySequence.get(sequence) ?? {};
-                const interaction = pending.find(
-                  (item) => item.sequence === sequence,
-                );
+                const { message, previous } = messageBySequence.get(sequence) ?? {};
+                const interaction = pending.find((item) => item.sequence === sequence);
                 const boundary =
                   message &&
                   (previous?.sessionId !== message.sessionId ||
                     previous?.projectId !== message.projectId)
                     ? [
                         previous?.sessionId !== message.sessionId
-                          ? (snapshot?.sessions.find(
-                              (session) => session.id === message.sessionId,
-                            )?.title ?? "历史话题")
+                          ? (snapshot?.sessions.find((session) => session.id === message.sessionId)
+                              ?.title ?? "历史话题")
                           : "",
                         previous?.projectId !== message.projectId
                           ? store.projectTitle(message.projectId)
@@ -327,21 +282,14 @@ export function Conversation({
                         .join(" · ")
                     : "";
                 return (
-                  <div
-                    className="timeline-row stack"
-                    data-sequence={sequence}
-                    key={sequence}
-                  >
+                  <div className="timeline-row stack" data-sequence={sequence} key={sequence}>
                     {boundary && (
                       <div className="boundary">
                         <span>{boundary}</span>
                       </div>
                     )}
                     {message ? (
-                      <Message
-                        message={message}
-                        onDetails={() => setDetails(message.id)}
-                      />
+                      <Message message={message} onDetails={() => setDetails(message.id)} />
                     ) : interaction ? (
                       <Pending interaction={interaction} />
                     ) : null}
@@ -354,9 +302,8 @@ export function Conversation({
                 .map((run) => (
                   <section key={run.id} className="card stack">
                     <p className="caption">
-                      执行预算已用尽：{run.steps}/{run.step_limit} 步 ·{" "}
-                      {run.tokens}/{run.token_limit} Token ·{" "}
-                      {Math.floor(run.active_ms / 1000)}/
+                      执行预算已用尽：{run.steps}/{run.step_limit} 步 · {run.tokens}/
+                      {run.token_limit} Token · {Math.floor(run.active_ms / 1000)}/
                       {Math.floor(run.time_limit / 1000)} 秒
                     </p>
                     <Button onClick={() => navigate("activity")}>
@@ -375,9 +322,7 @@ export function Conversation({
                     key={message.id}
                     title={message.content}
                     aria-label={`跳转到：${message.content.slice(0, 60)}`}
-                    aria-current={
-                      activeSequence === message.sequence ? "true" : undefined
-                    }
+                    aria-current={activeSequence === message.sequence ? "true" : undefined}
                     onClick={() => jump(message.sequence)}
                   >
                     <span />
@@ -388,8 +333,7 @@ export function Conversation({
                 aria-label="跳转到最新消息"
                 onClick={() => {
                   nearBottom.current = true;
-                  if (scroll.current)
-                    scroll.current.scrollTop = scroll.current.scrollHeight;
+                  if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
                 }}
               >
                 ↓
@@ -400,10 +344,7 @@ export function Conversation({
         <Composer active={active} />
       </div>
       {selectedMessage && (
-        <Details
-          message={selectedMessage}
-          onClose={() => setDetails(undefined)}
-        />
+        <Details message={selectedMessage} onClose={() => setDetails(undefined)} />
       )}
     </section>
   );

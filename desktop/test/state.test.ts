@@ -14,29 +14,14 @@ test("renderer methods cannot access host file paths or impersonate another wind
     "backup.preview",
     "__proto__",
   ])
-    assert.throws(
-      () => scopedPayload(method, {}, "window-a"),
-      /INVALID_REQUEST/,
-    );
+    assert.throws(() => scopedPayload(method, {}, "window-a"), /INVALID_REQUEST/);
   assert.deepEqual(
-    scopedPayload(
-      "message.send",
-      { surfaceId: "window-b", text: "hello" },
-      "window-a",
-    ),
+    scopedPayload("message.send", { surfaceId: "window-b", text: "hello" }, "window-a"),
     { surfaceId: "window-a", text: "hello" },
   );
+  assert.throws(() => scopedPayload("state.get", [], "window-a"), /INVALID_REQUEST/);
   assert.throws(
-    () => scopedPayload("state.get", [], "window-a"),
-    /INVALID_REQUEST/,
-  );
-  assert.throws(
-    () =>
-      scopedPayload(
-        "state.get",
-        { text: "x".repeat(8 * 1024 * 1024) },
-        "window-a",
-      ),
+    () => scopedPayload("state.get", { text: "x".repeat(8 * 1024 * 1024) }, "window-a"),
     /INVALID_REQUEST/,
   );
 });
@@ -70,9 +55,7 @@ test("window reading positions and appearance persist independently with private
     assert.equal(reopened.value.positions.a!.sequence, 2);
     assert.equal(reopened.value.positions.b!.sequence, 9);
     assert.equal(statSync(`${root}/ui-preferences.json`).mode & 0o777, 0o600);
-    assert.ok(
-      !readFileSync(`${root}/ui-preferences.json`, "utf8").includes("key"),
-    );
+    assert.ok(!readFileSync(`${root}/ui-preferences.json`, "utf8").includes("key"));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

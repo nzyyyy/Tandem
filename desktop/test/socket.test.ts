@@ -18,10 +18,7 @@ test("macOS socket checks the kernel peer PID before exposing any authentication
   server.listen(path);
   await once(server, "listening");
   try {
-    assert.throws(
-      () => connectRuntimeSocket(path, process.pid + 999999),
-      /INVALID_PEER/,
-    );
+    assert.throws(() => connectRuntimeSocket(path, process.pid + 999999), /INVALID_PEER/);
     assert.equal(received, "");
     const client = connectRuntimeSocket(path, process.pid);
     client.write("ping");

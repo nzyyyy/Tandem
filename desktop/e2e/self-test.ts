@@ -6,17 +6,10 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { BrowserWindow } from "electron";
 import type { RuntimeSupervisor } from "../runtime.ts";
 import type { Payload } from "../../shared/bridge.ts";
-import type {
-  AssistantSnapshot,
-  TimelineMessage,
-  RunContext,
-} from "../../shared/model.ts";
+import type { AssistantSnapshot, TimelineMessage, RunContext } from "../../shared/model.ts";
 import { startMockModel } from "./mock-model.ts";
 
-async function waitFor<T>(
-  read: () => Promise<T> | T,
-  check: (value: T) => boolean,
-): Promise<T> {
+async function waitFor<T>(read: () => Promise<T> | T, check: (value: T) => boolean): Promise<T> {
   for (let attempt = 0; attempt < 200; attempt++) {
     const value = await read();
     if (check(value)) return value;
@@ -35,8 +28,7 @@ export async function selfTest(
   const paths = mock.paths;
   const call = async <T = Payload>(method: string, payload: Payload = {}) =>
     (await runtime.request(method, payload)) as unknown as T;
-  const state = (surfaceId = "smoke") =>
-    call<AssistantSnapshot>("state.get", { surfaceId });
+  const state = (surfaceId = "smoke") => call<AssistantSnapshot>("state.get", { surfaceId });
   const send = async (text: string, extras: Payload = {}) =>
     call("message.send", {
       surfaceId: "smoke",
@@ -45,10 +37,7 @@ export async function selfTest(
       ...extras,
     });
   const completed = () =>
-    waitFor(
-      state,
-      (snapshot) => snapshot.messages.at(-1)?.status === "completed",
-    );
+    waitFor(state, (snapshot) => snapshot.messages.at(-1)?.status === "completed");
   try {
     const start = Date.now();
     await waitFor(() => runtime.status.connected, Boolean);
@@ -60,16 +49,14 @@ export async function selfTest(
       expectedRevision: config.revision,
       config: {
         schemaVersion: 1,
-        modelConnections: ["responses", "chat_completions", "messages"].map(
-          (apiType) => ({
-            id: apiType,
-            protocol: apiType === "messages" ? "anthropic" : "openai",
-            apiType,
-            url,
-            key: "smoke-private-key",
-            modelNames: ["smoke-model"],
-          }),
-        ),
+        modelConnections: ["responses", "chat_completions", "messages"].map((apiType) => ({
+          id: apiType,
+          protocol: apiType === "messages" ? "anthropic" : "openai",
+          apiType,
+          url,
+          key: "smoke-private-key",
+          modelNames: ["smoke-model"],
+        })),
         defaultModel: { connectionId: "responses", modelName: "smoke-model" },
       },
     });
@@ -93,11 +80,7 @@ export async function selfTest(
       const reopened = createWindow();
       await once(reopened.webContents, "did-finish-load");
       await waitFor(() => windowReady(reopened), Boolean);
-      assert.ok(
-        (await state()).activity.tasks.some(
-          (task) => task.status === "completed",
-        ),
-      );
+      assert.ok((await state()).activity.tasks.some((task) => task.status === "completed"));
       await send("lifecycle-hold", {
         newTopic: true,
         selection: {
@@ -106,10 +89,7 @@ export async function selfTest(
         },
         idempotencyKey: "lifecycle-hold",
       });
-      await waitFor(
-        state,
-        (snapshot) => snapshot.messages.at(-1)?.content === "partial",
-      );
+      await waitFor(state, (snapshot) => snapshot.messages.at(-1)?.content === "partial");
       reopened.destroy();
       // Keep the mock endpoint alive until quit has interrupted the in-flight run.
       await runtime.stop();
@@ -133,15 +113,9 @@ export async function selfTest(
     await send("crash-request", {
       selection: { connectionId: "chat_completions", modelName: "smoke-model" },
     });
-    await waitFor(
-      state,
-      (snapshot) => snapshot.messages.at(-1)?.content === "partial",
-    );
+    await waitFor(state, (snapshot) => snapshot.messages.at(-1)?.content === "partial");
     runtime.injectCrash();
-    await waitFor(
-      () => runtime.status.connected && runtime.status.nodePID !== firstPID,
-      Boolean,
-    );
+    await waitFor(() => runtime.status.connected && runtime.status.nodePID !== firstPID, Boolean);
     assert.equal((await state()).messages.at(-1)?.status, "interrupted");
     let snapshot = await state();
     await call("context.set", {
@@ -237,23 +211,18 @@ export async function selfTest(
     let before = allMessages[0]!.sequence;
     while (
       !allMessages.some(
-        (message) =>
-          message.role === "user" &&
-          message.interactionId === scoped.interactionId,
+        (message) => message.role === "user" && message.interactionId === scoped.interactionId,
       )
     ) {
-      const page = await call<{ messages: TimelineMessage[] }>(
-        "timeline.list",
-        { beforeSequence: before },
-      );
+      const page = await call<{ messages: TimelineMessage[] }>("timeline.list", {
+        beforeSequence: before,
+      });
       assert.ok(page.messages.length);
       allMessages.unshift(...page.messages);
       before = page.messages[0]!.sequence;
     }
     const evidence = allMessages.find(
-      (message) =>
-        message.role === "user" &&
-        message.interactionId === scoped.interactionId,
+      (message) => message.role === "user" && message.interactionId === scoped.interactionId,
     )!;
     const memory = await call<{ id: string }>("memory.save", {
       surfaceId: "smoke",
@@ -296,9 +265,7 @@ export async function selfTest(
           id: memorySnapshot,
           surfaceId: "smoke",
         })
-      ).fragments.some(
-        (fragment) => fragment.sourceId === memory.id && fragment.deleted,
-      ),
+      ).fragments.some((fragment) => fragment.sourceId === memory.id && fragment.deleted),
     );
     await send("Core after backup", { newTopic: true });
     await completed();
@@ -310,37 +277,27 @@ export async function selfTest(
     const preview = await call<{ token: string }>("backup.preview", {
       path: backup,
     });
-    const restoration = await call<{ protectionPath: string }>(
-      "backup.restore",
-      { token: preview.token, confirm: true },
-    );
+    const restoration = await call<{ protectionPath: string }>("backup.restore", {
+      token: preview.token,
+      confirm: true,
+    });
     for (const surface of ["smoke", "other-window"]) {
       const restored = await state(surface);
       assert.notEqual(restored.generation, snapshot.generation);
-      assert.ok(
-        !restored.messages.some(
-          (message) => message.content === "Core after backup",
-        ),
-      );
+      assert.ok(!restored.messages.some((message) => message.content === "Core after backup"));
     }
     assert.equal(runtime.directories.registrations().length, 0);
     assert.ok(existsSync(join(restoration.protectionPath, "config.json")));
-    const forgotten = await call<{ memories: unknown[]; markers: unknown[] }>(
-      "memory.list",
-      { surfaceId: "smoke" },
-    );
+    const forgotten = await call<{ memories: unknown[]; markers: unknown[] }>("memory.list", {
+      surfaceId: "smoke",
+    });
     assert.equal(forgotten.memories.length, 0);
     assert.equal(forgotten.markers.length, 1);
     const restoredConfig = await call<{
       config: { modelConnections: { key: string }[] };
     }>("config.get");
-    assert.ok(
-      restoredConfig.config.modelConnections.every((item) => item.key === ""),
-    );
-    assert.equal(
-      readFileSync(join(resources, "notes.md"), "utf8"),
-      "原生读取资料\n第二行",
-    );
+    assert.ok(restoredConfig.config.modelConnections.every((item) => item.key === ""));
+    assert.equal(readFileSync(join(resources, "notes.md"), "utf8"), "原生读取资料\n第二行");
     let history = (await state()).messages;
     while (history[0]!.sequence > 1)
       history = [

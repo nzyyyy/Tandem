@@ -4,9 +4,7 @@ import { closeSync } from "node:fs";
 
 const libc = koffi.load("/usr/lib/libSystem.B.dylib");
 const socket = libc.func("int socket(int domain, int type, int protocol)");
-const connect = libc.func(
-  "int connect(int fd, const void *address, unsigned int length)",
-);
+const connect = libc.func("int connect(int fd, const void *address, unsigned int length)");
 const getpeereid = libc.func(
   "int getpeereid(int fd, _Out_ unsigned int *uid, _Out_ unsigned int *gid)",
 );
@@ -15,10 +13,7 @@ const getsockopt = libc.func(
 );
 const fcntl = libc.func("int fcntl(int fd, int command, ...)");
 
-export function connectRuntimeSocket(
-  path: string,
-  expectedPID: number,
-): Socket {
+export function connectRuntimeSocket(path: string, expectedPID: number): Socket {
   const name = Buffer.from(path + "\0");
   if (name.length > 104) throw new Error("INVALID_SOCKET_PATH");
   const fd: number = socket(1, 1, 0);
@@ -28,10 +23,7 @@ export function connectRuntimeSocket(
     address[0] = 106;
     address[1] = 1;
     name.copy(address, 2);
-    if (
-      fcntl(fd, 2, "int", 1) !== 0 ||
-      connect(fd, address, address.length) !== 0
-    )
+    if (fcntl(fd, 2, "int", 1) !== 0 || connect(fd, address, address.length) !== 0)
       throw new Error("RUNTIME_DISCONNECTED");
     const uid = [0],
       gid = [0],

@@ -12,18 +12,13 @@ export async function startMockModel() {
     paths.push(request.url!);
     const messages = body.messages ?? body.input;
     if (JSON.stringify(messages).includes("M3 native read")) {
-      const result = messages.find(
-        (message: Payload) => message.role === "tool",
-      );
+      const result = messages.find((message: Payload) => message.role === "tool");
       const policy = messages.find(
         (message: Payload) =>
-          typeof message.content === "string" &&
-          message.content.includes('"grants":'),
+          typeof message.content === "string" && message.content.includes('"grants":'),
       );
       const grantId =
-        policy &&
-        JSON.parse(policy.content.slice(policy.content.indexOf("{"))).grants[0]
-          .id;
+        policy && JSON.parse(policy.content.slice(policy.content.indexOf("{"))).grants[0].id;
       response.setHeader("content-type", "application/json");
       const tool = result
         ? {
@@ -42,11 +37,7 @@ export async function startMockModel() {
               endLine: 2,
             }),
           };
-      if (result)
-        assert.equal(
-          JSON.parse(result.content).content,
-          "原生读取资料\n第二行",
-        );
+      if (result) assert.equal(JSON.parse(result.content).content, "原生读取资料\n第二行");
       response.end(
         JSON.stringify({
           choices: [
@@ -154,10 +145,7 @@ export async function startMockModel() {
           ];
     response.end(
       events
-        .map(
-          (event) =>
-            `data: ${typeof event === "string" ? event : JSON.stringify(event)}\n\n`,
-        )
+        .map((event) => `data: ${typeof event === "string" ? event : JSON.stringify(event)}\n\n`)
         .join(""),
     );
   });

@@ -94,8 +94,7 @@ test("grants preserve UTF-8, file size, output bounds, listing limits and direct
     assert.equal(read("large.txt", 0, 1).error, "TOOL_ARGUMENTS");
     assert.equal(read("large.txt", 1, 401).error, "TOOL_ARGUMENTS");
     assert.equal(read("large.txt", 2, 2).error, "LINE_RANGE");
-    for (let index = 0; index < 101; index++)
-      writeFileSync(`${root}/item-${index}`, "");
+    for (let index = 0; index < 101; index++) writeFileSync(`${root}/item-${index}`, "");
     const listing = access.execute({
       method: "list_directory",
       grantId: id,

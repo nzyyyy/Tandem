@@ -56,14 +56,12 @@ export class DirectoryAccess {
     }
   }
   registrations() {
-    return [...this.grants.values()].map(
-      ({ id, resourceId, path, projectId }) => ({
-        id,
-        resourceId,
-        label: basename(path),
-        projectId,
-      }),
-    );
+    return [...this.grants.values()].map(({ id, resourceId, path, projectId }) => ({
+      id,
+      resourceId,
+      label: basename(path),
+      projectId,
+    }));
   }
   revoke(id: string) {
     const grant = this.grants.get(id);
@@ -84,8 +82,7 @@ export class DirectoryAccess {
       "DIRECTORY_SCOPE",
     );
     requireValue(
-      actual ===
-        (relative === "." ? root : (root === "/" ? "" : root) + "/" + relative),
+      actual === (relative === "." ? root : (root === "/" ? "" : root) + "/" + relative),
       "FILE_CHANGED",
     );
     const current = lstatSync(grant.path, { bigint: true }),
@@ -116,8 +113,7 @@ export class DirectoryAccess {
       );
       const parts = relative.split("/");
       requireValue(
-        relative === "." ||
-          parts.every((part) => part && part !== "." && part !== ".."),
+        relative === "." || parts.every((part) => part && part !== "." && part !== ".."),
         "DIRECTORY_SCOPE",
       );
       fd = dup(grant.fd);
@@ -127,10 +123,7 @@ export class DirectoryAccess {
           const next: number = openat(
             fd,
             part,
-            O_NOFOLLOW |
-              O_CLOEXEC |
-              O_NONBLOCK |
-              (index < parts.length - 1 ? O_DIRECTORY : 0),
+            O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK | (index < parts.length - 1 ? O_DIRECTORY : 0),
           );
           requireValue(next >= 0, "DIRECTORY_SCOPE");
           closeSync(fd);
@@ -167,9 +160,7 @@ export class DirectoryAccess {
             const header = Buffer.from(koffi.decode(entry, "uint8_t", 21));
             const length = header.readUInt16LE(18);
             requireValue(length > 0 && length <= 1023, "FILE_UNAVAILABLE");
-            const name = Buffer.from(
-              koffi.decode(entry, 21, "uint8_t", length),
-            ).toString("utf8");
+            const name = Buffer.from(koffi.decode(entry, 21, "uint8_t", length)).toString("utf8");
             if (name === "." || name === "..") continue;
             if (entries.length === 100) {
               truncated = true;
@@ -188,10 +179,7 @@ export class DirectoryAccess {
           truncated,
         };
       }
-      requireValue(
-        request.method === "read_file" && before.isFile(),
-        "NOT_REGULAR_FILE",
-      );
+      requireValue(request.method === "read_file" && before.isFile(), "NOT_REGULAR_FILE");
       requireValue(before.size <= 1048576n, "FILE_TOO_LARGE");
       requireValue(
         ![
@@ -241,24 +229,14 @@ export class DirectoryAccess {
       } catch {
         throw new Error("INVALID_UTF8");
       }
-      requireValue(
-        !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/.test(content),
-        "BINARY_CONTENT",
-      );
-      const lines = content
-        .replaceAll("\r\n", "\n")
-        .replaceAll("\r", "\n")
-        .split("\n");
+      requireValue(!/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/.test(content), "BINARY_CONTENT");
+      const lines = content.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
       requireValue(first <= lines.length, "LINE_RANGE");
       let selected = "",
         end = first,
         partialLine = false,
         clipped = false;
-      for (
-        let number = first;
-        number <= Math.min(last, lines.length);
-        number++
-      ) {
+      for (let number = first; number <= Math.min(last, lines.length); number++) {
         const separator = number === first ? "" : "\n";
         const remaining = 32768 - Buffer.byteLength(selected + separator);
         if (remaining < 0) {

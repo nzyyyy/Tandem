@@ -6,10 +6,7 @@ export type ConversationPosition = {
   atBottom: boolean;
   projectFilter: string;
 };
-export function mergeMessages(
-  current: TimelineMessage[],
-  incoming: TimelineMessage[],
-) {
+export function mergeMessages(current: TimelineMessage[], incoming: TimelineMessage[]) {
   const messages = new Map(current.map((message) => [message.id, message]));
   for (const message of incoming) messages.set(message.id, message);
   return [...messages.values()].sort((a, b) => a.sequence - b.sequence);
@@ -22,8 +19,7 @@ export function activeQuestion(
   return messages.findLast(
     (message) =>
       message.role === "user" &&
-      (atBottom ||
-        (visibleSequence !== undefined && message.sequence <= visibleSequence)),
+      (atBottom || (visibleSequence !== undefined && message.sequence <= visibleSequence)),
   )?.sequence;
 }
 export function applySnapshot(
@@ -40,18 +36,14 @@ export function allowsExternal(value: string) {
   try {
     const url = new URL(value);
     return (
-      ["http:", "https:"].includes(url.protocol) &&
-      !!url.hostname &&
-      !url.username &&
-      !url.password
+      ["http:", "https:"].includes(url.protocol) && !!url.hostname && !url.username && !url.password
     );
   } catch {
     return false;
   }
 }
-export const modelId = (
-  value: { connectionId: string; modelName: string } | null,
-) => (value ? `${value.connectionId}\0${value.modelName}` : "");
+export const modelId = (value: { connectionId: string; modelName: string } | null) =>
+  value ? `${value.connectionId}\0${value.modelName}` : "";
 export function modelSelection(value: string) {
   if (!value) return null;
   const [connectionId, modelName] = value.split("\0");

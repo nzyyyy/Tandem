@@ -1,12 +1,5 @@
 import { execFileSync } from "node:child_process";
-import {
-  cpSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { packager } from "@electron/packager";
 import { compile } from "./compile.mjs";
@@ -18,23 +11,11 @@ mkdirSync(stage, { recursive: true });
 for (const path of ["desktop", "shared", "runtime", "renderer"])
   cpSync(`dist/app/${path}`, `${stage}/${path}`, { recursive: true });
 cpSync(process.execPath, `${stage}/node`);
-for (const file of [
-  "package.json",
-  "pnpm-lock.yaml",
-  "pnpm-workspace.yaml",
-  ".npmrc",
-])
+for (const file of ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc"])
   cpSync(file, `${stage}/${file}`);
 execFileSync(
   "pnpm",
-  [
-    "install",
-    "--prod",
-    "--offline",
-    "--frozen-lockfile",
-    "--ignore-scripts",
-    "--ignore-workspace",
-  ],
+  ["install", "--prod", "--offline", "--frozen-lockfile", "--ignore-scripts", "--ignore-workspace"],
   { cwd: stage, stdio: "inherit", env: { ...process.env, CI: "true" } },
 );
 const manifest = JSON.parse(readFileSync(`${stage}/package.json`, "utf8"));
@@ -64,13 +45,7 @@ for (const size of [16, 32, 128, 256, 512])
       ],
       { stdio: "ignore" },
     );
-execFileSync("iconutil", [
-  "-c",
-  "icns",
-  iconset,
-  "-o",
-  resolve("dist/AppIcon.icns"),
-]);
+execFileSync("iconutil", ["-c", "icns", iconset, "-o", resolve("dist/AppIcon.icns")]);
 let notices =
   "Tandem third-party notices\nElectron and Chromium licenses accompany the application in Contents/Resources.\n";
 const dependencyRoot = `${stage}/node_modules/.pnpm`;
@@ -104,9 +79,7 @@ const [bundle] = await packager({
   name: "Tandem",
   platform: "darwin",
   arch: "arm64",
-  electronVersion: JSON.parse(
-    readFileSync("node_modules/electron/package.json", "utf8"),
-  ).version,
+  electronVersion: JSON.parse(readFileSync("node_modules/electron/package.json", "utf8")).version,
   appBundleId: "dev.tandem.personal-agent",
   appVersion: "0.2.0",
   buildVersion: "17",

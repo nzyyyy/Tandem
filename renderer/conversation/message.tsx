@@ -2,12 +2,7 @@ import { ChevronDown, Ellipsis } from "lucide-react";
 import type { TimelineMessage } from "../../shared/model.ts";
 import { errorText } from "../../shared/errors.ts";
 import { useAssistant } from "../store.tsx";
-import {
-  Button,
-  Menu,
-  MenuItem,
-  MenuSub,
-} from "../components/ui.tsx";
+import { Button, Menu, MenuItem, MenuSub } from "../components/ui.tsx";
 import { Markdown } from "../components/markdown.tsx";
 
 export function CorrectMenu({ message }: { message: TimelineMessage }) {
@@ -88,24 +83,19 @@ export function Message({
           ) : (
             <Markdown source={message.content} />
           ))}
-        {!user &&
-          message.executionInteractionVersion !==
-            message.interactionVersion && (
-            <section className="card stack tight">
-              <p className="caption">
-                原回答使用：{store.projectTitle(message.executionProjectId)}
-                。更改归属不会改写历史上下文。
-              </p>
-              {message.runId && (
-                <Button
-                  disabled={sending}
-                  onClick={() => void store.retry(message.runId!)}
-                >
-                  按当前归属重新处理
-                </Button>
-              )}
-            </section>
-          )}
+        {!user && message.executionInteractionVersion !== message.interactionVersion && (
+          <section className="card stack tight">
+            <p className="caption">
+              原回答使用：{store.projectTitle(message.executionProjectId)}
+              。更改归属不会改写历史上下文。
+            </p>
+            {message.runId && (
+              <Button disabled={sending} onClick={() => void store.retry(message.runId!)}>
+                按当前归属重新处理
+              </Button>
+            )}
+          </section>
+        )}
         {message.status && message.status !== "completed" && (
           <div className="stack tight">
             {["queued", "running"].includes(message.status) ? (
@@ -126,23 +116,14 @@ export function Message({
             ) : message.status === "waiting_approval" ? (
               <p className="caption">等待目录授权，请在审批卡片中处理。</p>
             ) : message.status === "paused" ? (
-              <p className="caption">
-                执行已暂停，请在 Activity 查看进度与预算。
-              </p>
+              <p className="caption">执行已暂停，请在 Activity 查看进度与预算。</p>
             ) : (
               <>
-                <p
-                  className={
-                    message.status === "cancelled" ? "caption" : "error"
-                  }
-                >
+                <p className={message.status === "cancelled" ? "caption" : "error"}>
                   {errorText(message.errorCode ?? "INTERRUPTED")}
                 </p>
                 {message.runId && (
-                  <Button
-                    disabled={sending}
-                    onClick={() => void store.retry(message.runId!)}
-                  >
+                  <Button disabled={sending} onClick={() => void store.retry(message.runId!)}>
                     {selectedModel ? "使用所选模型重试" : "使用原模型重试"}
                   </Button>
                 )}

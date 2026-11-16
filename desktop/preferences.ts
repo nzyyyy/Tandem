@@ -1,10 +1,4 @@
-import {
-  existsSync,
-  readFileSync,
-  mkdirSync,
-  writeFileSync,
-  renameSync,
-} from "node:fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -46,16 +40,12 @@ export class PreferenceStore {
       sidebarWidth: Number.isFinite(value.sidebarWidth)
         ? Math.min(360, Math.max(196, value.sidebarWidth!))
         : 238,
-      lastSurface:
-        typeof value.lastSurface === "string" ? value.lastSurface : undefined,
+      lastSurface: typeof value.lastSurface === "string" ? value.lastSurface : undefined,
       positions,
     };
   }
   private importLegacy() {
-    const path = join(
-      homedir(),
-      "Library/Preferences/dev.tandem.personal-agent.plist",
-    );
+    const path = join(homedir(), "Library/Preferences/dev.tandem.personal-agent.plist");
     if (!existsSync(path)) return;
     this.importLegacyDocument(
       execFileSync("/usr/bin/plutil", ["-convert", "xml1", "-o", "-", path], {
@@ -67,13 +57,11 @@ export class PreferenceStore {
     const value = plist.parse(document) as Record<string, unknown>;
     const positions: Record<string, ConversationPosition> = {};
     for (const [key, data] of Object.entries(value))
-      if (
-        key.startsWith("tandem.conversationPosition.") &&
-        Buffer.isBuffer(data)
-      ) {
+      if (key.startsWith("tandem.conversationPosition.") && Buffer.isBuffer(data)) {
         try {
-          positions[key.slice("tandem.conversationPosition.".length)] =
-            JSON.parse(data.toString("utf8"));
+          positions[key.slice("tandem.conversationPosition.".length)] = JSON.parse(
+            data.toString("utf8"),
+          );
         } catch {
           /* Ignore an obsolete anchor. */
         }

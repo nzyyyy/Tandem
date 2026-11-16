@@ -26,8 +26,7 @@ class Connection {
     this.socket.on("data", (chunk) => {
       try {
         for (const value of decoder.push(chunk)) {
-          if (!value || typeof value !== "object")
-            throw new Error("INVALID_RESPONSE");
+          if (!value || typeof value !== "object") throw new Error("INVALID_RESPONSE");
           const response = value as Payload;
           if (
             response.protocolVersion !== 1 ||
@@ -51,11 +50,7 @@ class Connection {
             this.close();
           } else
             job.reject(
-              new Error(
-                String(
-                  (response.error as Payload)?.code ?? "LOCAL_STORAGE_ERROR",
-                ),
-              ),
+              new Error(String((response.error as Payload)?.code ?? "LOCAL_STORAGE_ERROR")),
             );
         }
       } catch {
@@ -72,8 +67,7 @@ class Connection {
     });
   }
   request(method: string, payload: Payload = {}): Promise<Payload> {
-    if (this.socket.destroyed)
-      return Promise.reject(new Error("RUNTIME_DISCONNECTED"));
+    if (this.socket.destroyed) return Promise.reject(new Error("RUNTIME_DISCONNECTED"));
     return new Promise((resolve, reject) => {
       const requestId = randomUUID();
       const timer = setTimeout(
@@ -86,9 +80,7 @@ class Connection {
       );
       this.pending.set(requestId, { resolve, reject, timer });
       try {
-        this.socket.write(
-          encodeFrame({ protocolVersion: 1, requestId, method, payload }),
-        );
+        this.socket.write(encodeFrame({ protocolVersion: 1, requestId, method, payload }));
       } catch {
         this.pending.delete(requestId);
         clearTimeout(timer);
@@ -160,9 +152,7 @@ export class RuntimeSupervisor {
             socketPath: path,
             token,
             hostPid: process.pid,
-            ...(this.dataDirectory
-              ? { dataDirectory: this.dataDirectory }
-              : {}),
+            ...(this.dataDirectory ? { dataDirectory: this.dataDirectory } : {}),
           }) + "\n",
         );
         let failures = 0,
@@ -184,17 +174,12 @@ export class RuntimeSupervisor {
                 hello.nodeVersion !== "v24.22.2"
               )
                 throw new Error("INVALID_PEER");
-              this.updateGeneration(
-                (await client.request("runtime.info")).generation,
-              );
+              this.updateGeneration((await client.request("runtime.info")).generation);
               for (const grant of this.directories.registrations()) {
                 try {
                   await client.request("directory.register", grant);
                 } catch (error) {
-                  if (
-                    error instanceof Error &&
-                    error.message === "PROJECT_UNAVAILABLE"
-                  )
+                  if (error instanceof Error && error.message === "PROJECT_UNAVAILABLE")
                     this.directories.revoke(grant.id);
                   else throw error;
                 }
@@ -205,8 +190,7 @@ export class RuntimeSupervisor {
             }
             const client = this.connection;
             const pong = await client.request("ping");
-            if (pong.pong !== true || pong.pid !== child.pid)
-              throw new Error("INVALID_PEER");
+            if (pong.pong !== true || pong.pid !== child.pid) throw new Error("INVALID_PEER");
             const work = await client.request("native.next");
             this.updateGeneration(work.generation);
             for (const request of work.requests as Payload[])
@@ -239,8 +223,7 @@ export class RuntimeSupervisor {
         const seconds = Math.min(30, 2 ** Math.min(attempt++, 5));
         this.status.status = `Runtime 已退出，${seconds} 秒后重启`;
         this.log(`runtime_restart delay=${seconds}s`);
-        for (let tick = 0; tick < seconds * 10 && !this.stopping; tick++)
-          await delay(100);
+        for (let tick = 0; tick < seconds * 10 && !this.stopping; tick++) await delay(100);
       }
     }
     this.status.status = "已停止";
@@ -254,13 +237,8 @@ export class RuntimeSupervisor {
       return;
     }
     child.stdin.end();
-    if (child.exitCode === null && child.signalCode === null)
-      child.kill("SIGTERM");
-    for (
-      let index = 0;
-      index < 20 && child.exitCode === null && child.signalCode === null;
-      index++
-    )
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    for (let index = 0; index < 20 && child.exitCode === null && child.signalCode === null; index++)
       await delay(100);
     if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGKILL");

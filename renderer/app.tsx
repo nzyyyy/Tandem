@@ -19,13 +19,7 @@ import { Settings } from "./settings.tsx";
 import { Projects } from "./projects.tsx";
 import { Memory } from "./memory.tsx";
 import { Activity } from "./activity.tsx";
-import {
-  Button,
-  IconButton,
-  Modal,
-  Notice,
-  SelectionRow,
-} from "./components/ui.tsx";
+import { Button, IconButton, Modal, Notice, SelectionRow } from "./components/ui.tsx";
 
 const pages = [
   { id: "assistant", title: "对话", Icon: MessagesSquare },
@@ -74,9 +68,7 @@ export function App() {
     if (dirty) setPending({ page: target, session });
     else move({ page: target, session });
   };
-  const changePreferences = (
-    value: Partial<Pick<Preferences, "appearance" | "sidebarWidth">>,
-  ) => {
+  const changePreferences = (value: Partial<Pick<Preferences, "appearance" | "sidebarWidth">>) => {
     setPreferences((previous) => ({ ...previous, ...value }));
     void window.tandem.preferences(value);
   };
@@ -90,11 +82,7 @@ export function App() {
           </div>
           <nav className="primary-nav stack tight" aria-label="主导航">
             {pages.map(({ id, title, Icon }) => (
-              <SelectionRow
-                key={id}
-                selected={page === id}
-                onClick={() => navigate(id)}
-              >
+              <SelectionRow key={id} selected={page === id} onClick={() => navigate(id)}>
                 <Icon size={17} />
                 <span>{title}</span>
               </SelectionRow>
@@ -105,10 +93,7 @@ export function App() {
             {snapshot?.sessions.map((session) => (
               <SelectionRow
                 key={session.id}
-                selected={
-                  page === "assistant" &&
-                  snapshot.focus.activeSessionId === session.id
-                }
+                selected={page === "assistant" && snapshot.focus.activeSessionId === session.id}
                 onClick={() => navigate("assistant", session.id)}
               >
                 <MessageCircle size={16} />
@@ -141,9 +126,7 @@ export function App() {
               onClick={() => setDiagnostics(true)}
               title={status.status}
             >
-              <span
-                className={`status-dot ${status.connected ? "connected" : ""}`}
-              />
+              <span className={`status-dot ${status.connected ? "connected" : ""}`} />
               <span>本地运行</span>
               <span className="spacer" />
               <ChevronRight size={12} />
@@ -165,11 +148,7 @@ export function App() {
               changePreferences({
                 sidebarWidth: Math.min(
                   360,
-                  Math.max(
-                    196,
-                    preferences.sidebarWidth +
-                      (event.key === "ArrowLeft" ? -8 : 8),
-                  ),
+                  Math.max(196, preferences.sidebarWidth + (event.key === "ArrowLeft" ? -8 : 8)),
                 ),
               });
             }
@@ -187,10 +166,7 @@ export function App() {
                 ...previous,
                 sidebarWidth: Math.min(
                   360,
-                  Math.max(
-                    196,
-                    drag.current!.width + event.clientX - drag.current!.x,
-                  ),
+                  Math.max(196, drag.current!.width + event.clientX - drag.current!.x),
                 ),
               }));
           }}
@@ -216,18 +192,11 @@ export function App() {
                   <Notice error>{error ?? status.status}</Notice>
                 </div>
               )}
-              {page === "settings" && (
-                <Settings onDirty={onDirty} onBusy={onBusy} />
-              )}
-              {page === "projects" && (
-                <Projects onDirty={onDirty} onBusy={onBusy} />
-              )}
+              {page === "settings" && <Settings onDirty={onDirty} onBusy={onBusy} />}
+              {page === "projects" && <Projects onDirty={onDirty} onBusy={onBusy} />}
               {page === "activity" && <Activity onBusy={onBusy} />}
               {page === "memory" && (
-                <Memory
-                  onBusy={onBusy}
-                  openSource={(session) => navigate("assistant", session)}
-                />
+                <Memory onBusy={onBusy} openSource={(session) => navigate("assistant", session)} />
               )}
             </div>
           )}
@@ -259,9 +228,7 @@ export function App() {
             <dd>{status.restartCount}</dd>
           </dl>
           <div className="row">
-            <Button onClick={() => void window.tandem.diagnostics("reconnect")}>
-              断开重连
-            </Button>
+            <Button onClick={() => void window.tandem.diagnostics("reconnect")}>断开重连</Button>
             <Button onClick={() => void window.tandem.diagnostics("crash")}>
               模拟 Runtime 崩溃
             </Button>

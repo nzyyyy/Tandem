@@ -21,9 +21,7 @@ export function Approvals() {
             <p className="caption">
               工具：{approval.name} ·{" "}
               {store.projectTitle(
-                snapshot.activity.runs.find(
-                  (item) => item.id === approval.run_id,
-                )?.project_id,
+                snapshot.activity.runs.find((item) => item.id === approval.run_id)?.project_id,
               )}
             </p>
             <p className="caption">

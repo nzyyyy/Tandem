@@ -2,15 +2,7 @@ import { useEffect, useState } from "react";
 import { Archive, Folder, Plus } from "lucide-react";
 import { useAssistant, rpc } from "./store.tsx";
 import type { ProjectDeletion, TandemProject } from "../shared/model.ts";
-import {
-  Button,
-  Field,
-  Header,
-  Modal,
-  Picker,
-  SelectionRow,
-  Toggle,
-} from "./components/ui.tsx";
+import { Button, Field, Header, Modal, Picker, SelectionRow, Toggle } from "./components/ui.tsx";
 import { useAction } from "./components/actions.ts";
 
 export function Projects({
@@ -31,9 +23,7 @@ export function Projects({
     [preview, setPreview] = useState<ProjectDeletion>();
   const dirty = title !== saved.title || description !== saved.description;
   const project = snapshot?.projects.find((item) => item.id === selection),
-    projects =
-      snapshot?.projects.filter((item) => archived || item.status === "open") ??
-      [];
+    projects = snapshot?.projects.filter((item) => archived || item.status === "open") ?? [];
   useEffect(() => {
     onDirty(dirty);
   }, [dirty, onDirty]);
@@ -45,9 +35,7 @@ export function Projects({
       setPending(id);
       return;
     }
-    const item = store.state.snapshot?.projects.find(
-      (project) => project.id === id,
-    );
+    const item = store.state.snapshot?.projects.find((project) => project.id === id);
     setSelection(id);
     setTitle(item?.title ?? "");
     setDescription(item?.description ?? "");
@@ -61,21 +49,14 @@ export function Projects({
   }
   const save = (status: string) =>
     run(async () => {
-      const ok = await store.perform(
-        project ? "project.update" : "project.create",
-        {
-          ...(project
-            ? { id: project.id, expectedVersion: saved.version, status }
-            : {}),
-          title,
-          description,
-        },
-      );
+      const ok = await store.perform(project ? "project.update" : "project.create", {
+        ...(project ? { id: project.id, expectedVersion: saved.version, status } : {}),
+        title,
+        description,
+      });
       if (ok) {
         if (project) {
-          const updated = store.state.snapshot?.projects.find(
-            (item) => item.id === project.id,
-          );
+          const updated = store.state.snapshot?.projects.find((item) => item.id === project.id);
           setSaved({
             title,
             description,
@@ -109,11 +90,7 @@ export function Projects({
                   selected={item.id === selection}
                   onClick={() => select(item.id)}
                 >
-                  {item.status === "archived" ? (
-                    <Archive size={16} />
-                  ) : (
-                    <Folder size={16} />
-                  )}
+                  {item.status === "archived" ? <Archive size={16} /> : <Folder size={16} />}
                   <span>
                     {item.title}
                     {item.status === "archived" && <small>已归档</small>}
@@ -181,11 +158,7 @@ export function Projects({
                   <hr />
                   <div className="stack">
                     <Button
-                      onClick={() =>
-                        void save(
-                          project.status === "archived" ? "open" : "archived",
-                        )
-                      }
+                      onClick={() => void save(project.status === "archived" ? "open" : "archived")}
                     >
                       {project.status === "archived" ? "恢复项目" : "归档项目"}
                     </Button>
@@ -194,10 +167,7 @@ export function Projects({
                       onClick={() =>
                         void run(async () =>
                           setPreview(
-                            await rpc<ProjectDeletion>(
-                              "project.deletePreview",
-                              { id: project.id },
-                            ),
+                            await rpc<ProjectDeletion>("project.deletePreview", { id: project.id }),
                           ),
                         )
                       }
@@ -212,15 +182,13 @@ export function Projects({
                   <h3>永久删除「{preview.title}」</h3>
                   <p>
                     将删除 {preview.interactions.length} 次交互、
-                    {preview.messages.length} 条消息及 {preview.runs.length}{" "}
-                    次执行；{preview.sharedSnapshots.length}{" "}
-                    份快照含相关引用，将清理对应片段和{" "}
+                    {preview.messages.length} 条消息及 {preview.runs.length} 次执行；
+                    {preview.sharedSnapshots.length} 份快照含相关引用，将清理对应片段和{" "}
                     {preview.derivedMessages.length} 条派生回答内容。
                   </p>
                   <p>
-                    将影响 {new Set(preview.tasks.map((item) => item.id)).size}{" "}
-                    个任务，清理 {preview.memories.length}{" "}
-                    条关联记忆、证据与派生副本。
+                    将影响 {new Set(preview.tasks.map((item) => item.id)).size} 个任务，清理{" "}
+                    {preview.memories.length} 条关联记忆、证据与派生副本。
                   </p>
                   <p className="caption">
                     此操作无法撤销。共享会话中的其他交互保留，外部文件不受影响。归属已纠正但实际使用过本项目上下文的交互也在清理范围内。已有遗忘标记继续保留；迁移保护副本、云端留存及
@@ -252,19 +220,11 @@ export function Projects({
         </div>
       </div>
       {pending !== undefined && (
-        <Modal
-          title="放弃当前项目的修改？"
-          busy={busy}
-          onClose={() => setPending(undefined)}
-        >
+        <Modal title="放弃当前项目的修改？" busy={busy} onClose={() => setPending(undefined)}>
           <p>当前项目的修改尚未保存。</p>
           <div className="row end">
             <Button onClick={() => setPending(undefined)}>继续编辑</Button>
-            <Button
-              kind="danger"
-              disabled={busy}
-              onClick={() => select(pending, true)}
-            >
+            <Button kind="danger" disabled={busy} onClick={() => select(pending, true)}>
               放弃修改并切换
             </Button>
           </div>

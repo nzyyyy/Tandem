@@ -19,20 +19,12 @@ function strings(value: string | null) {
 function summary(value: string) {
   try {
     const item = JSON.parse(value);
-    return [item.name, item.path, item.error, item.modelName]
-      .filter(Boolean)
-      .join(" · ");
+    return [item.name, item.path, item.error, item.modelName].filter(Boolean).join(" · ");
   } catch {
     return value;
   }
 }
-function Revision({
-  task,
-  onClose,
-}: {
-  task: PersistentTask;
-  onClose: () => void;
-}) {
+function Revision({ task, onClose }: { task: PersistentTask; onClose: () => void }) {
   const { store, selectedModel, error } = useAssistant();
   const { busy, run } = useAction();
   const [request, setRequest] = useState(""),
@@ -40,20 +32,12 @@ function Revision({
     [criteria, setCriteria] = useState(strings(task.criteria).join("\n")),
     [key] = useState(() => crypto.randomUUID());
   return (
-    <Modal
-      title={`修改任务 · 新建修订 ${task.revision + 1}`}
-      busy={busy}
-      onClose={onClose}
-    >
+    <Modal title={`修改任务 · 新建修订 ${task.revision + 1}`} busy={busy} onClose={onClose}>
       <p className="caption">
         旧执行停止派发；既有交付与完成依据保留，新修订重新核验。使用输入区当前选定模型或全局默认模型。
       </p>
       <Field title="修改要求">
-        <textarea
-          value={request}
-          onChange={(event) => setRequest(event.target.value)}
-          rows={2}
-        />
+        <textarea value={request} onChange={(event) => setRequest(event.target.value)} rows={2} />
       </Field>
       <Field title="预期交付物">
         <textarea
@@ -63,19 +47,13 @@ function Revision({
         />
       </Field>
       <Field title="完成标准（每行一条）">
-        <textarea
-          value={criteria}
-          onChange={(event) => setCriteria(event.target.value)}
-          rows={5}
-        />
+        <textarea value={criteria} onChange={(event) => setCriteria(event.target.value)} rows={5} />
       </Field>
       <Notice error>{error}</Notice>
       <div className="row end">
         <Button
           kind="primary"
-          disabled={
-            busy || !request.trim() || !deliverable.trim() || !criteria.trim()
-          }
+          disabled={busy || !request.trim() || !deliverable.trim() || !criteria.trim()}
           onClick={() =>
             void run(async () => {
               if (
@@ -88,9 +66,7 @@ function Revision({
                     id: task.id,
                     expectedRevision: task.revision,
                     deliverable,
-                    criteria: criteria
-                      .split("\n")
-                      .filter((value) => value.trim()),
+                    criteria: criteria.split("\n").filter((value) => value.trim()),
                   },
                 })
               )
@@ -115,20 +91,14 @@ export function Activity({ onBusy }: { onBusy: (value: boolean) => void }) {
   }, [busy, onBusy]);
   const openResult = (messageId: string) =>
     run(async () =>
-      setResult(
-        (await rpc<{ content: string }>("result.get", { messageId })).content,
-      ),
+      setResult((await rpc<{ content: string }>("result.get", { messageId })).content),
     );
   return (
     <section className="page">
       <Header title="Activity">
         <Button
           disabled={busy}
-          onClick={() =>
-            void run(() =>
-              store.authorize(snapshot?.focus.activeProjectId ?? null),
-            )
-          }
+          onClick={() => void run(() => store.authorize(snapshot?.focus.activeProjectId ?? null))}
         >
           授权只读目录
         </Button>
@@ -137,15 +107,11 @@ export function Activity({ onBusy }: { onBusy: (value: boolean) => void }) {
         <div className="page-content stack spacious">
           <Approvals />
           <h2>授权目录</h2>
-          <p className="caption">
-            授权保留到应用退出，可随时撤销；重新启动后请主动重新选择目录。
-          </p>
+          <p className="caption">授权保留到应用退出，可随时撤销；重新启动后请主动重新选择目录。</p>
           {snapshot?.activity.grants.map((grant) => (
             <div className="row wrap" key={grant.id}>
               <strong>{grant.label}</strong>
-              <span className="caption">
-                {store.projectTitle(grant.project_id)}
-              </span>
+              <span className="caption">{store.projectTitle(grant.project_id)}</span>
               <span className="spacer" />
               {grant.status === "active" ? (
                 <Button
@@ -162,9 +128,7 @@ export function Activity({ onBusy }: { onBusy: (value: boolean) => void }) {
               ) : (
                 <Button
                   disabled={busy}
-                  onClick={() =>
-                    void run(() => store.authorize(grant.project_id, grant.id))
-                  }
+                  onClick={() => void run(() => store.authorize(grant.project_id, grant.id))}
                 >
                   重新选择同一目录
                 </Button>
@@ -194,10 +158,7 @@ export function Activity({ onBusy }: { onBusy: (value: boolean) => void }) {
               ))}
               <div className="row wrap">
                 {task.result_ref && (
-                  <Button
-                    disabled={busy}
-                    onClick={() => void openResult(task.result_ref!)}
-                  >
+                  <Button disabled={busy} onClick={() => void openResult(task.result_ref!)}>
                     打开 Markdown 结果
                   </Button>
                 )}
@@ -245,61 +206,40 @@ export function Activity({ onBusy }: { onBusy: (value: boolean) => void }) {
                 <h3>{executionStatus(item.status)}</h3>
                 <span className="caption">{item.modelName}</span>
                 <span className="spacer" />
-                <Button
-                  disabled={busy}
-                  onClick={() => void openResult(item.assistant_message_id)}
-                >
+                <Button disabled={busy} onClick={() => void openResult(item.assistant_message_id)}>
                   查看当前输出
                 </Button>
               </div>
               <p className="caption">{store.projectTitle(item.project_id)}</p>
               <p className="caption">
-                步骤 {item.steps}/{item.step_limit} · Token {item.tokens}/
-                {item.token_limit}
+                步骤 {item.steps}/{item.step_limit} · Token {item.tokens}/{item.token_limit}
                 {item.estimated === 1 ? "（含保守估算）" : ""} · 活跃时间{" "}
-                {Math.floor(item.active_ms / 1000)}/
-                {Math.floor(item.time_limit / 1000)} 秒
+                {Math.floor(item.active_ms / 1000)}/{Math.floor(item.time_limit / 1000)} 秒
               </p>
-              {item.error_code && (
-                <p className="error">{errorText(item.error_code)}</p>
-              )}
+              {item.error_code && <p className="error">{errorText(item.error_code)}</p>}
               <div className="row wrap">
                 {["paused", "interrupted"].includes(item.status) && (
-                  <Button
-                    disabled={busy}
-                    onClick={() => void run(() => store.continueRun(item))}
-                  >
-                    {item.pause_reason === "budget_exhausted"
-                      ? "追加预算并继续"
-                      : "继续"}
+                  <Button disabled={busy} onClick={() => void run(() => store.continueRun(item))}>
+                    {item.pause_reason === "budget_exhausted" ? "追加预算并继续" : "继续"}
                   </Button>
                 )}
                 {item.pause_reason === "budget_exhausted" && (
                   <span className="caption">+24 步 / 64000 Token / 300 秒</span>
                 )}
-                {[
-                  "queued",
-                  "running",
-                  "paused",
-                  "waiting_approval",
-                  "interrupted",
-                ].includes(item.status) && (
+                {["queued", "running", "paused", "waiting_approval", "interrupted"].includes(
+                  item.status,
+                ) && (
                   <Button
                     disabled={busy}
                     onClick={() =>
-                      void run(() =>
-                        store.perform("message.cancel", { runId: item.id }),
-                      )
+                      void run(() => store.perform("message.cancel", { runId: item.id }))
                     }
                   >
                     取消执行
                   </Button>
                 )}
                 {item.status === "failed" && (
-                  <Button
-                    disabled={busy}
-                    onClick={() => void store.retry(item.id)}
-                  >
+                  <Button disabled={busy} onClick={() => void store.retry(item.id)}>
                     重试
                   </Button>
                 )}
@@ -310,8 +250,7 @@ export function Activity({ onBusy }: { onBusy: (value: boolean) => void }) {
                   {item.stepsDetail.map((step) => (
                     <div className="row" key={step.id}>
                       <p className="caption">
-                        {executionStatus(step.status)} ·{" "}
-                        {summary(step.detail) || step.kind}
+                        {executionStatus(step.status)} · {summary(step.detail) || step.kind}
                       </p>
                       <span className="spacer" />
                       {step.snapshot_id && (
@@ -339,15 +278,9 @@ export function Activity({ onBusy }: { onBusy: (value: boolean) => void }) {
         </div>
       </div>
       {result !== undefined && (
-        <Modal
-          title="执行结果与来源"
-          onClose={() => setResult(undefined)}
-          className="result-modal"
-        >
+        <Modal title="执行结果与来源" onClose={() => setResult(undefined)} className="result-modal">
           <div className="row end">
-            <Button onClick={() => void window.tandem.copy(result)}>
-              复制 Markdown
-            </Button>
+            <Button onClick={() => void window.tandem.copy(result)}>复制 Markdown</Button>
           </div>
           <div className="result-scroll">
             <Markdown source={result} />
@@ -364,9 +297,7 @@ export function Activity({ onBusy }: { onBusy: (value: boolean) => void }) {
           </div>
         </Modal>
       )}
-      {editing && (
-        <Revision task={editing} onClose={() => setEditing(undefined)} />
-      )}
+      {editing && <Revision task={editing} onClose={() => setEditing(undefined)} />}
     </section>
   );
 }

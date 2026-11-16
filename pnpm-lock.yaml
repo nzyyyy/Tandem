@@ -75,6 +75,9 @@ importers:
       jsdom:
         specifier: 31.0.1
         version: 31.0.1
+      prettier:
+        specifier: 3.10.1
+        version: 3.10.1
       tailwindcss:
         specifier: 4.3.5
         version: 4.3.5
@@ -2212,6 +2215,11 @@ packages:
   postject@1.0.0-alpha.6:
     resolution: {integrity: sha512-b9Eb8h2eVqNE8edvKdwqkrY6O7kAwmI8kcnBv1NScolYJbo59XUF0noFq+lxbC1yN20bmC0WBEbDC5H/7ASb0A==}
     engines: {node: '>=14.0.0'}
+    hasBin: true
+
+  prettier@3.10.1:
+    resolution: {integrity: sha512-70vp3ZUYoPlFbF9uiTdXHUUCGEIp7d4+6p+8DYbkm2jP7x/3i/paXVF6dopSI3zd/CEitrZN1rc4i85xWmmXlg==}
+    engines: {node: '>=14'}
     hasBin: true
 
   pretty-format@27.5.1:
@@ -5098,6 +5106,8 @@ snapshots:
   postject@1.0.0-alpha.6:
     dependencies:
       commander: 9.5.0
+
+  prettier@3.10.1: {}
 
   pretty-format@27.5.1:
     dependencies:

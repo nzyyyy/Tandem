@@ -1,14 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAssistant, rpc } from "./store.tsx";
-import {
-  Button,
-  Field,
-  Header,
-  Modal,
-  Notice,
-  Picker,
-  Toggle,
-} from "./components/ui.tsx";
+import { Button, Field, Header, Modal, Notice, Picker, Toggle } from "./components/ui.tsx";
 import { useAction } from "./components/actions.ts";
 import type { Payload } from "../shared/bridge.ts";
 import type { RendererMethod } from "../shared/model.ts";
@@ -71,12 +63,10 @@ export function Memory({
       message.role === "user" &&
       message.interactionVersion != null &&
       (snapshot?.focus.contextMode === "automatic" ||
-        (!!message.projectId &&
-          message.projectId === snapshot?.focus.activeProjectId)),
+        (!!message.projectId && message.projectId === snapshot?.focus.activeProjectId)),
   );
   const source = sources.find((message) => message.id === sourceId);
-  const reload = async () =>
-    setList(await rpc<MemoryList>("memory.list", { query }));
+  const reload = async () => setList(await rpc<MemoryList>("memory.list", { query }));
   useEffect(() => {
     let alive = true;
     void rpc<MemoryList>("memory.list", { query }).then(
@@ -102,9 +92,7 @@ export function Memory({
     await reload();
     return true;
   };
-  const groups = [
-    ...new Set(list.memories.map((record) => record.project_id ?? "")),
-  ].sort();
+  const groups = [...new Set(list.memories.map((record) => record.project_id ?? ""))].sort();
   return (
     <section className="page">
       <Header title="长期记忆">
@@ -123,35 +111,27 @@ export function Memory({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.nativeEvent.isComposing)
-                void run(reload);
+              if (event.key === "Enter" && !event.nativeEvent.isComposing) void run(reload);
             }}
           />
           {groups.map((scope) => (
             <section className="stack tight" key={scope}>
-              <h3 className="caption">
-                {scope ? store.projectTitle(scope) : "全局"}
-              </h3>
+              <h3 className="caption">{scope ? store.projectTitle(scope) : "全局"}</h3>
               {list.memories
                 .filter((record) => (record.project_id ?? "") === scope)
                 .map((record) => (
                   <article className="record stack" key={record.id}>
                     <div className="row wrap">
-                      <strong>
-                        {record.kind === "decision" ? "决策" : "事实"}
-                      </strong>
-                      <span className="caption">
-                        {statusTitle(record.status)}
-                      </span>
+                      <strong>{record.kind === "decision" ? "决策" : "事实"}</strong>
+                      <span className="caption">{statusTitle(record.status)}</span>
                       <span className="spacer" />
                       <Button
                         disabled={busy}
                         onClick={() =>
                           void run(async () => {
-                            const detail = await rpc<{ evidence: Evidence[] }>(
-                              "memory.get",
-                              { id: record.id },
-                            );
+                            const detail = await rpc<{ evidence: Evidence[] }>("memory.get", {
+                              id: record.id,
+                            });
                             setEvidence(detail.evidence);
                             setEdited(record.content);
                             setSelected(record);
@@ -160,11 +140,7 @@ export function Memory({
                       >
                         证据与修正
                       </Button>
-                      <Button
-                        kind="danger"
-                        disabled={busy}
-                        onClick={() => setForget(record)}
-                      >
+                      <Button kind="danger" disabled={busy} onClick={() => setForget(record)}>
                         遗忘
                       </Button>
                     </div>
@@ -179,9 +155,7 @@ export function Memory({
                           : "用户消息 · 候选"}
                     </p>
                     {record.supersedes_id && (
-                      <p className="caption">
-                        替代版本：{record.supersedes_id}
-                      </p>
+                      <p className="caption">替代版本：{record.supersedes_id}</p>
                     )}
                   </article>
                 ))}
@@ -198,8 +172,7 @@ export function Memory({
               {list.markers.map((marker) => (
                 <div className="row" key={marker.id}>
                   <span className="caption">
-                    {store.projectTitle(marker.scope || null)} ·{" "}
-                    {marker.key_hash.slice(0, 12)}
+                    {store.projectTitle(marker.scope || null)} · {marker.key_hash.slice(0, 12)}
                   </span>
                   <span className="spacer" />
                   <Button
@@ -235,9 +208,8 @@ export function Memory({
               <section className="stack" key={item.message_id}>
                 <p className="prewrap">{item.content}</p>
                 <p className="caption">
-                  消息 {item.message_id} · 原版本 {item.interaction_version} /
-                  当前 {item.current_version} ·{" "}
-                  {item.valid === 1 ? "有效" : "归属已纠正，证据停用"}
+                  消息 {item.message_id} · 原版本 {item.interaction_version} / 当前{" "}
+                  {item.current_version} · {item.valid === 1 ? "有效" : "归属已纠正，证据停用"}
                 </p>
                 <Button
                   onClick={() => {
@@ -252,11 +224,7 @@ export function Memory({
             ))}
           </div>
           <Field title="修正内容">
-            <textarea
-              value={edited}
-              onChange={(event) => setEdited(event.target.value)}
-              rows={3}
-            />
+            <textarea value={edited} onChange={(event) => setEdited(event.target.value)} rows={3} />
           </Field>
           <p className="caption">
             确认或修正会创建带原始证据的新版本，不迁移已失效的证据，也不更改任务。
@@ -266,24 +234,17 @@ export function Memory({
             <Button
               kind="primary"
               disabled={
-                busy ||
-                ["superseded", "suspended"].includes(selected.status) ||
-                !edited.trim()
+                busy || ["superseded", "suspended"].includes(selected.status) || !edited.trim()
               }
               onClick={() =>
                 void run(async () => {
                   if (
-                    await action(
-                      edited === selected.content
-                        ? "memory.confirm"
-                        : "memory.update",
-                      {
-                        id: selected.id,
-                        expectedVersion: selected.version,
-                        content: edited,
-                        confirm: true,
-                      },
-                    )
+                    await action(edited === selected.content ? "memory.confirm" : "memory.update", {
+                      id: selected.id,
+                      expectedVersion: selected.version,
+                      content: edited,
+                      confirm: true,
+                    })
                   )
                     setSelected(undefined);
                 })
@@ -295,11 +256,7 @@ export function Memory({
         </Modal>
       )}
       {forget && (
-        <Modal
-          title="遗忘这条记忆及其派生副本？"
-          busy={busy}
-          onClose={() => setForget(undefined)}
-        >
+        <Modal title="遗忘这条记忆及其派生副本？" busy={busy} onClose={() => setForget(undefined)}>
           <p>
             原聊天仍保留；同一原证据不会自动重新生成此记忆。已有备份及云端副本不随本地删除改变。
           </p>
@@ -328,14 +285,8 @@ export function Memory({
         </Modal>
       )}
       {showSave && (
-        <Modal
-          title="从用户证据保存"
-          busy={busy}
-          onClose={() => setShowSave(false)}
-        >
-          <p className="caption">
-            仅列出当前已加载的用户消息。请核对主体、属性、内容和原始证据。
-          </p>
+        <Modal title="从用户证据保存" busy={busy} onClose={() => setShowSave(false)}>
+          <p className="caption">仅列出当前已加载的用户消息。请核对主体、属性、内容和原始证据。</p>
           <Picker
             label="用户消息"
             value={sourceId}
@@ -386,13 +337,7 @@ export function Memory({
           <div className="row end">
             <Button
               kind="primary"
-              disabled={
-                busy ||
-                !source ||
-                !subject.trim() ||
-                !predicate.trim() ||
-                !content.trim()
-              }
+              disabled={busy || !source || !subject.trim() || !predicate.trim() || !content.trim()}
               onClick={() =>
                 void run(async () => {
                   if (

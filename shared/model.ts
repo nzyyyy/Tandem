@@ -1,15 +1,7 @@
 // Wire types retain the existing runtime RPC shape.
 // The editor holds unvalidated drafts, so only protocol fields are widened.
-import type {
-  AppConfig,
-  Connection,
-  ModelSelection,
-} from "../runtime/src/contract.ts";
-export type {
-  ModelSelection,
-  RendererMethod,
-  RestorePreview,
-} from "../runtime/src/contract.ts";
+import type { AppConfig, Connection, ModelSelection } from "../runtime/src/contract.ts";
+export type { ModelSelection, RendererMethod, RestorePreview } from "../runtime/src/contract.ts";
 export type ModelConnection = Omit<Connection, "protocol" | "apiType"> & {
   protocol: string;
   apiType: string;

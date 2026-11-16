@@ -6,27 +6,15 @@ import type {
   ApprovalCard,
   ActivityRun,
 } from "../shared/model.ts";
-import type {
-  Bootstrap,
-  Payload,
-  Reply,
-  RuntimeStatus,
-} from "../shared/bridge.ts";
-import {
-  applySnapshot,
-  mergeMessages,
-  modelSelection,
-} from "../shared/conversation.ts";
+import type { Bootstrap, Payload, Reply, RuntimeStatus } from "../shared/bridge.ts";
+import { applySnapshot, mergeMessages, modelSelection } from "../shared/conversation.ts";
 import { errorText } from "../shared/errors.ts";
 
 export function unwrap<T>(reply: Reply): T {
   if (!reply.ok) throw new Error(reply.error);
   return reply.data as T;
 }
-export async function rpc<T>(
-  method: RendererMethod,
-  payload: Payload = {},
-): Promise<T> {
+export async function rpc<T>(method: RendererMethod, payload: Payload = {}): Promise<T> {
   return unwrap<T>(await window.tandem.request(method, payload));
 }
 type Composer = {
@@ -98,9 +86,7 @@ export class AssistantStore {
       } catch {
         this.set({ error: "本地连接暂时不可用，请稍后重试。" });
       }
-      await new Promise((resolve) =>
-        setTimeout(resolve, this.state.snapshot ? 400 : 100),
-      );
+      await new Promise((resolve) => setTimeout(resolve, this.state.snapshot ? 400 : 100));
     }
   }
   stop() {
@@ -114,8 +100,7 @@ export class AssistantStore {
         generation: this.state.snapshot?.generation,
         afterSequence: this.cursor,
       });
-      const changedGeneration =
-        this.state.snapshot?.generation !== snapshot.generation;
+      const changedGeneration = this.state.snapshot?.generation !== snapshot.generation;
       const json = JSON.stringify(snapshot);
       const messages = applySnapshot(
         this.state.messages,
@@ -127,12 +112,8 @@ export class AssistantStore {
           snapshot,
           messages,
           hasMore:
-            changedGeneration || this.cursor === undefined
-              ? snapshot.hasMore
-              : this.state.hasMore,
-          ...(changedGeneration || !this.state.snapshot
-            ? { error: undefined }
-            : {}),
+            changedGeneration || this.cursor === undefined ? snapshot.hasMore : this.state.hasMore,
+          ...(changedGeneration || !this.state.snapshot ? { error: undefined } : {}),
         });
       this.snapshotJSON = json;
       this.cursor = snapshot.cursor;
@@ -167,9 +148,7 @@ export class AssistantStore {
   }
   showError(error: unknown) {
     this.set({
-      error: errorText(
-        error instanceof Error ? error.message : "LOCAL_STORAGE_ERROR",
-      ),
+      error: errorText(error instanceof Error ? error.message : "LOCAL_STORAGE_ERROR"),
     });
   }
   async perform(method: RendererMethod, payload: Payload = {}) {
@@ -209,9 +188,7 @@ export class AssistantStore {
           ? {
               task: {
                 deliverable: state.taskDeliverable,
-                criteria: state.taskCriteria
-                  .split("\n")
-                  .filter((line) => line.trim()),
+                criteria: state.taskCriteria.split("\n").filter((line) => line.trim()),
               },
             }
           : {}),
@@ -258,9 +235,8 @@ export class AssistantStore {
   async approve(approval: ApprovalCard, allow: boolean) {
     try {
       const projectId =
-        this.state.snapshot?.activity.runs.find(
-          (run) => run.id === approval.run_id,
-        )?.project_id ?? null;
+        this.state.snapshot?.activity.runs.find((run) => run.id === approval.run_id)?.project_id ??
+        null;
       const grantId = allow
         ? unwrap<string | null>(await window.tandem.chooseDirectory(projectId))
         : null;
@@ -295,14 +271,13 @@ export class AssistantStore {
   }
   projectTitle(id: string | null | undefined) {
     return id
-      ? (this.state.snapshot?.projects.find((project) => project.id === id)
-          ?.title ?? "历史项目")
+      ? (this.state.snapshot?.projects.find((project) => project.id === id)?.title ?? "历史项目")
       : "未关联项目";
   }
   connectionTitle(id: string | null) {
     return (
-      this.state.snapshot?.models.find((option) => option.connectionId === id)
-        ?.connectionName ?? "历史供应商"
+      this.state.snapshot?.models.find((option) => option.connectionId === id)?.connectionName ??
+      "历史供应商"
     );
   }
 }

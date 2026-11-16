@@ -24,10 +24,7 @@ export function Pending({ interaction }: { interaction: PendingInteraction }) {
       <p className="caption">{interaction.route.reason}</p>
       {interaction.route.candidates.map((candidate) => (
         <div className="stack tight" key={candidate.sessionId}>
-          <Button
-            disabled={busy}
-            onClick={() => void confirm(candidate.sessionId)}
-          >
+          <Button disabled={busy} onClick={() => void confirm(candidate.sessionId)}>
             {candidate.title}
           </Button>
           <p className="caption">

@@ -10,6 +10,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.check.json && tsc -p tsconfig.desktop.json --noEmit && tsc -p tsconfig.renderer.json",
+    "format": "prettier --write \"{renderer,desktop,runtime,shared,scripts}/**/*.{ts,tsx,cts,mjs}\" \"*.{ts,json}\"",
+    "format:check": "prettier --check \"{renderer,desktop,runtime,shared,scripts}/**/*.{ts,tsx,cts,mjs}\" \"*.{ts,json}\"",
     "test": "node --test runtime/test/*.test.ts desktop/test/*.test.ts shared/test/*.test.ts && vitest run && node scripts/smoke.mjs",
     "dev": "node scripts/launch.mjs",
     "test:lifecycle": "pnpm run build && node scripts/lifecycle.mjs",
@@ -28,6 +30,7 @@
     "@vitejs/plugin-react": "6.3.0",
     "electron": "45.3.2",
     "jsdom": "31.0.1",
+    "prettier": "3.10.1",
     "tailwindcss": "4.3.5",
     "typescript": "5.9.3",
     "vite": "8.3.8",

@@ -5,11 +5,12 @@ Personal Agent 的 Core MVP 开发版本：Electron + React + TypeScript 桌面�
 ## 开发环境
 
 - Apple Silicon Mac；最低部署目标 macOS 15.0。本机验证环境为 macOS 27.2，未在 macOS 15 实机运行。
-- Electron 45.3.2、React 19.3.1、TypeScript 5.9.3、Vite、Tailwind CSS 4 与 Radix UI。日常构建不再依赖 Swift / Xcode。
+- Electron 45.3.2、React 19.3.1、TypeScript 5.9.3、Vite、Tailwind CSS 4、Radix UI 与 Prettier 3.10.1。日常构建不再依赖 Swift / Xcode。
 - Node **24.22.2**，pnpm **11.22.0**；TypeScript 和类型依赖已锁定。
 
 ```sh
 pnpm install --frozen-lockfile
+pnpm run format
 pnpm run build
 pnpm run typecheck
 pnpm run test
@@ -64,7 +65,7 @@ AI 回答与 Activity 报告使用 react-markdown、GFM 和代码高亮渲染，
 
 ## 检查
 
-`pnpm run typecheck` 检查运行时、Electron 宿主、桥接及 React 页面；`pnpm run test:unit` 运行运行时/宿主测试和 React 交互测试，覆盖配置冲突、权限、模型协议、安全目录读取、消息幂等、中文输入、删除预览、未保存编辑及 Markdown 安全策略。
+`pnpm run format:check` 检查代码格式；`pnpm run typecheck` 检查运行时、Electron 宿主、桥接及 React 页面；`pnpm run test:unit` 运行运行时/宿主测试和 React 交互测试，覆盖配置冲突、权限、模型协议、安全目录读取、消息幂等、中文输入、删除预览、未保存编辑及 Markdown 安全策略。
 
 `pnpm run test` 还运行真实 Electron → 受保护 Unix Socket → 独立 Node → 本机模拟模型的无窗口联调，检查三种 API、流式响应、项目路由与纠正、持续任务与目录工具、长期记忆、备份恢复与遗忘保护、不同窗口的数据代次、历史分页、重连、崩溃恢复及退出清理。测试使用隔离目录，不读取真实 Key，不调用付费模型；需要允许本机 Unix Socket 和 HTTP listen。
 

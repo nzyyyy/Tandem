@@ -1,11 +1,11 @@
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { DatabaseSync } from 'node:sqlite';
-import { copyFileSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
-import { AppService } from '../src/service.ts';
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import { copyFileSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { AppService } from "../src/service.ts";
 
-test('M1 to M2 migration preserves identities, causal inputs and focus, and interrupts pending work', async () => {
-  const directory = mkdtempSync('/tmp/tandem-migrate-');
+test("M1 to M2 migration preserves identities, causal inputs and focus, and interrupts pending work", async () => {
+  const directory = mkdtempSync("/tmp/tandem-migrate-");
   const legacy = new DatabaseSync(`${directory}/tandem.sqlite`);
   legacy.exec(`
     PRAGMA foreign_keys=ON;
@@ -32,89 +32,146 @@ test('M1 to M2 migration preserves identities, causal inputs and focus, and inte
   legacy.close();
   let app = new AppService(directory);
   try {
-    const state: any = app.dispatch('state.get',{surfaceId:'a'});
-    assert.deepEqual(state.messages.map((m:any)=>[m.id,m.sequence]),[['u1',1],['a1',2],['u2',3],['a2',4]]);
-    assert.equal(state.focus.version,7);
-    assert.equal(state.focus.activeSessionId,'s');
-    assert.equal(state.focus.contextMode,'automatic');
-    assert.equal(state.messages[3].status,'interrupted');
-    const snapshot: any = app.dispatch('snapshot.get',{surfaceId:'a',id:state.messages[1].snapshotId});
-    assert.equal(snapshot.fragments[0].content,'legacy question');
-    assert.equal(snapshot.fragments[0].sourceType,'legacy_input');
-    assert.equal(app.store.db.prepare('SELECT COUNT(*) AS n FROM interactions').get()!.n,2);
-    assert.equal(app.store.db.prepare('PRAGMA foreign_key_check').all().length,0);
-    assert.equal(app.store.db.prepare('PRAGMA user_version').get()!.user_version,4);
-    const backups=readdirSync(`${directory}/migrations`);
-    assert.equal(backups.length,3);
-    const backupPath=`${directory}/migrations/${backups.find(name=>name.startsWith('schema-1-'))}`;
-    assert.equal(statSync(backupPath).mode & 0o777,0o600);
-    const original=new DatabaseSync(backupPath,{readOnly:true});
+    const state: any = app.dispatch("state.get", { surfaceId: "a" });
+    assert.deepEqual(
+      state.messages.map((m: any) => [m.id, m.sequence]),
+      [
+        ["u1", 1],
+        ["a1", 2],
+        ["u2", 3],
+        ["a2", 4],
+      ],
+    );
+    assert.equal(state.focus.version, 7);
+    assert.equal(state.focus.activeSessionId, "s");
+    assert.equal(state.focus.contextMode, "automatic");
+    assert.equal(state.messages[3].status, "interrupted");
+    const snapshot: any = app.dispatch("snapshot.get", {
+      surfaceId: "a",
+      id: state.messages[1].snapshotId,
+    });
+    assert.equal(snapshot.fragments[0].content, "legacy question");
+    assert.equal(snapshot.fragments[0].sourceType, "legacy_input");
+    assert.equal(app.store.db.prepare("SELECT COUNT(*) AS n FROM interactions").get()!.n, 2);
+    assert.equal(app.store.db.prepare("PRAGMA foreign_key_check").all().length, 0);
+    assert.equal(app.store.db.prepare("PRAGMA user_version").get()!.user_version, 4);
+    const backups = readdirSync(`${directory}/migrations`);
+    assert.equal(backups.length, 3);
+    const backupPath = `${directory}/migrations/${backups.find((name) => name.startsWith("schema-1-"))}`;
+    assert.equal(statSync(backupPath).mode & 0o777, 0o600);
+    const original = new DatabaseSync(backupPath, { readOnly: true });
     try {
-      assert.equal(original.prepare('PRAGMA user_version').get()!.user_version,1);
-      assert.equal(original.prepare('SELECT COUNT(*) AS n FROM messages').get()!.n,4);
-      assert.equal(original.prepare('PRAGMA quick_check').get()!.quick_check,'ok');
-    } finally {original.close();}
+      assert.equal(original.prepare("PRAGMA user_version").get()!.user_version, 1);
+      assert.equal(original.prepare("SELECT COUNT(*) AS n FROM messages").get()!.n, 4);
+      assert.equal(original.prepare("PRAGMA quick_check").get()!.quick_check, "ok");
+    } finally {
+      original.close();
+    }
     // Exercise recovery on a disposable copy; never replace a live application database.
-    const recovery=mkdtempSync('/tmp/tandem-recovery-');
+    const recovery = mkdtempSync("/tmp/tandem-recovery-");
     try {
-      copyFileSync(backupPath,`${recovery}/tandem.sqlite`);
-      const restored=new AppService(recovery);
-      assert.equal(restored.store.db.prepare('SELECT COUNT(*) AS n FROM messages').get()!.n,4);
+      copyFileSync(backupPath, `${recovery}/tandem.sqlite`);
+      const restored = new AppService(recovery);
+      assert.equal(restored.store.db.prepare("SELECT COUNT(*) AS n FROM messages").get()!.n, 4);
       await restored.stop();
-    } finally {rmSync(recovery,{recursive:true,force:true});}
-    const failure=mkdtempSync('/tmp/tandem-migration-fail-');
+    } finally {
+      rmSync(recovery, { recursive: true, force: true });
+    }
+    const failure = mkdtempSync("/tmp/tandem-migration-fail-");
     try {
-      copyFileSync(backupPath,`${failure}/tandem.sqlite`);
-      const conflict=new DatabaseSync(`${failure}/tandem.sqlite`);
-      conflict.exec('CREATE TABLE projects(id TEXT)'); conflict.close();
-      assert.throws(()=>new AppService(failure));
-      const unchanged=new DatabaseSync(`${failure}/tandem.sqlite`,{readOnly:true});
+      copyFileSync(backupPath, `${failure}/tandem.sqlite`);
+      const conflict = new DatabaseSync(`${failure}/tandem.sqlite`);
+      conflict.exec("CREATE TABLE projects(id TEXT)");
+      conflict.close();
+      assert.throws(() => new AppService(failure));
+      const unchanged = new DatabaseSync(`${failure}/tandem.sqlite`, { readOnly: true });
       try {
-        assert.equal(unchanged.prepare('PRAGMA user_version').get()!.user_version,1);
-        assert.equal(unchanged.prepare('SELECT COUNT(*) AS n FROM messages').get()!.n,4);
-        assert.equal(unchanged.prepare("SELECT COUNT(*) AS n FROM pragma_table_info('messages') WHERE name='interaction_id'").get()!.n,0);
-      } finally {unchanged.close();}
-      assert.equal(readdirSync(`${failure}/migrations`).length,1);
-    } finally {rmSync(failure,{recursive:true,force:true});}
+        assert.equal(unchanged.prepare("PRAGMA user_version").get()!.user_version, 1);
+        assert.equal(unchanged.prepare("SELECT COUNT(*) AS n FROM messages").get()!.n, 4);
+        assert.equal(
+          unchanged
+            .prepare(
+              "SELECT COUNT(*) AS n FROM pragma_table_info('messages') WHERE name='interaction_id'",
+            )
+            .get()!.n,
+          0,
+        );
+      } finally {
+        unchanged.close();
+      }
+      assert.equal(readdirSync(`${failure}/migrations`).length, 1);
+    } finally {
+      rmSync(failure, { recursive: true, force: true });
+    }
     await app.stop();
     app = new AppService(directory);
-    assert.equal(app.store.db.prepare('SELECT COUNT(*) AS n FROM interactions').get()!.n,2);
-    assert.equal(app.store.db.prepare('SELECT COUNT(*) AS n FROM context_snapshots').get()!.n,2);
-    const project: any=app.dispatch('project.create',{title:'legacy corrected',description:''});
-    const input=app.store.db.prepare("SELECT interaction_id FROM messages WHERE id='u1'").get()!;
-    app.dispatch('interaction.correct',{surfaceId:'a',interactionId:input.interaction_id,projectId:project.id,expectedVersion:1});
-    const preview: any=app.dispatch('project.deletePreview',{id:project.id});
-    app.dispatch('project.delete',{token:preview.token,confirm:true});
-    const remaining=app.store.db.prepare('SELECT fragments_json FROM context_snapshots').all();
-    assert.equal(remaining.length,1);
-    assert.equal(String(remaining[0].fragments_json).includes('legacy question'),false);
-    assert.equal(app.store.db.prepare("SELECT content FROM messages WHERE id='a2'").get()!.content,'内容已删除，无法还原');
-    assert.equal(app.store.db.prepare('PRAGMA foreign_key_check').all().length,0);
-  } finally { await app.stop(); rmSync(directory,{recursive:true,force:true}); }
+    assert.equal(app.store.db.prepare("SELECT COUNT(*) AS n FROM interactions").get()!.n, 2);
+    assert.equal(app.store.db.prepare("SELECT COUNT(*) AS n FROM context_snapshots").get()!.n, 2);
+    const project: any = app.dispatch("project.create", {
+      title: "legacy corrected",
+      description: "",
+    });
+    const input = app.store.db.prepare("SELECT interaction_id FROM messages WHERE id='u1'").get()!;
+    app.dispatch("interaction.correct", {
+      surfaceId: "a",
+      interactionId: input.interaction_id,
+      projectId: project.id,
+      expectedVersion: 1,
+    });
+    const preview: any = app.dispatch("project.deletePreview", { id: project.id });
+    app.dispatch("project.delete", { token: preview.token, confirm: true });
+    const remaining = app.store.db.prepare("SELECT fragments_json FROM context_snapshots").all();
+    assert.equal(remaining.length, 1);
+    assert.equal(String(remaining[0].fragments_json).includes("legacy question"), false);
+    assert.equal(
+      app.store.db.prepare("SELECT content FROM messages WHERE id='a2'").get()!.content,
+      "内容已删除，无法还原",
+    );
+    assert.equal(app.store.db.prepare("PRAGMA foreign_key_check").all().length, 0);
+  } finally {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
-test('M2 to M3 protects WAL history and rolls back a conflicting schema without altering old tables',async()=>{
-  const directory=mkdtempSync('/tmp/tandem-m3-migration-');
-  const recovery=mkdtempSync('/tmp/tandem-m3-rollback-');
+test("M2 to M3 protects WAL history and rolls back a conflicting schema without altering old tables", async () => {
+  const directory = mkdtempSync("/tmp/tandem-m3-migration-");
+  const recovery = mkdtempSync("/tmp/tandem-m3-rollback-");
   try {
-    const initial=new AppService(directory);
+    const initial = new AppService(directory);
     await initial.stop();
-    const name=readdirSync(`${directory}/migrations`).find(n=>n.startsWith('schema-2-'))!;
-    const path=`${directory}/migrations/${name}`;
-    assert.equal(statSync(path).mode&0o777,0o600);
-    copyFileSync(path,`${recovery}/tandem.sqlite`);
-    const old=new DatabaseSync(`${recovery}/tandem.sqlite`);
-    old.exec("INSERT INTO sessions(id,title,temporary,created_at,updated_at) VALUES('preserve','WAL data',0,1,1); CREATE TABLE tasks(conflict TEXT);");old.close();
-    assert.throws(()=>new AppService(recovery));
-    const unchanged=new DatabaseSync(`${recovery}/tandem.sqlite`);
-    assert.equal(unchanged.prepare('PRAGMA user_version').get()!.user_version,2);
-    assert.equal(unchanged.prepare("SELECT title FROM sessions WHERE id='preserve'").get()!.title,'WAL data');
-    assert.equal(unchanged.prepare("SELECT 1 FROM sqlite_master WHERE name='run_progress'").get(),undefined);
-    unchanged.exec('DROP TABLE tasks');unchanged.close();
-    const upgraded=new AppService(recovery);
-    assert.equal(upgraded.store.db.prepare('PRAGMA user_version').get()!.user_version,4);
-    assert.equal(upgraded.store.db.prepare("SELECT title FROM sessions WHERE id='preserve'").get()!.title,'WAL data');
-    assert.equal(upgraded.store.db.prepare('PRAGMA foreign_key_check').all().length,0);
+    const name = readdirSync(`${directory}/migrations`).find((n) => n.startsWith("schema-2-"))!;
+    const path = `${directory}/migrations/${name}`;
+    assert.equal(statSync(path).mode & 0o777, 0o600);
+    copyFileSync(path, `${recovery}/tandem.sqlite`);
+    const old = new DatabaseSync(`${recovery}/tandem.sqlite`);
+    old.exec(
+      "INSERT INTO sessions(id,title,temporary,created_at,updated_at) VALUES('preserve','WAL data',0,1,1); CREATE TABLE tasks(conflict TEXT);",
+    );
+    old.close();
+    assert.throws(() => new AppService(recovery));
+    const unchanged = new DatabaseSync(`${recovery}/tandem.sqlite`);
+    assert.equal(unchanged.prepare("PRAGMA user_version").get()!.user_version, 2);
+    assert.equal(
+      unchanged.prepare("SELECT title FROM sessions WHERE id='preserve'").get()!.title,
+      "WAL data",
+    );
+    assert.equal(
+      unchanged.prepare("SELECT 1 FROM sqlite_master WHERE name='run_progress'").get(),
+      undefined,
+    );
+    unchanged.exec("DROP TABLE tasks");
+    unchanged.close();
+    const upgraded = new AppService(recovery);
+    assert.equal(upgraded.store.db.prepare("PRAGMA user_version").get()!.user_version, 4);
+    assert.equal(
+      upgraded.store.db.prepare("SELECT title FROM sessions WHERE id='preserve'").get()!.title,
+      "WAL data",
+    );
+    assert.equal(upgraded.store.db.prepare("PRAGMA foreign_key_check").all().length, 0);
     await upgraded.stop();
-  } finally {rmSync(directory,{recursive:true,force:true});rmSync(recovery,{recursive:true,force:true});}
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    rmSync(recovery, { recursive: true, force: true });
+  }
 });

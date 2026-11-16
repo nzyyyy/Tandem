@@ -1,10 +1,5 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "rootDir": ".", "noEmit": true },
-  "include": [
-    "runtime/**/*.ts",
-    "shared/**/*.ts",
-    "desktop/test/**/*.ts",
-    "desktop/**/*.d.ts"
-  ]
+  "include": ["runtime/**/*.ts", "shared/**/*.ts", "desktop/test/**/*.ts", "desktop/**/*.d.ts"]
 }

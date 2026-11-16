@@ -1,7 +1,6 @@
 const messages: Record<string, string> = {
   BACKUP_BUSY: "正在恢复备份，请稍后再操作。",
-  BACKUP_SIZE:
-    "备份超过大小限制或文件类型不受支持；当前最多 128 MiB 数据、4096 个文件。",
+  BACKUP_SIZE: "备份超过大小限制或文件类型不受支持；当前最多 128 MiB 数据、4096 个文件。",
   BACKUP_CHANGED: "备份源文件发生变化，请重新选择。",
   BACKUP_DESTINATION: "请选择应用数据目录以外的新文件名，已有文件不会被覆盖。",
   BACKUP_VERSION: "备份或数据版本不受支持，当前数据未被替换。",
@@ -9,19 +8,15 @@ const messages: Record<string, string> = {
   BACKUP_PATH: "备份包含不支持的路径、链接或文件结构，已拒绝。",
   BACKUP_CHECKSUM: "备份内容与校验值不符，已拒绝恢复。",
   BACKUP_DATABASE: "备份数据库未通过完整性或结构校验，已拒绝恢复。",
-  BACKUP_CREDENTIALS:
-    "备份包含模型 Key，已拒绝恢复。请选择由 Tandem 导出的脱敏备份。",
+  BACKUP_CREDENTIALS: "备份包含模型 Key，已拒绝恢复。请选择由 Tandem 导出的脱敏备份。",
   RESTORE_PREVIEW_EXPIRED: "恢复预览已过期，请重新选择备份并核对。",
   RESTORE_CONFIRM_REQUIRED: "请先核对备份预览，再明确确认替换并恢复。",
-  RESTORE_JOURNAL:
-    "上次恢复尚未完成，保护副本已保留；请检查磁盘权限和恢复记录。",
-  TOOL_RESULT_UNKNOWN:
-    "工具结果尚未核实，不能重复执行。请检查已有产物后手动重新处理。",
+  RESTORE_JOURNAL: "上次恢复尚未完成，保护副本已保留；请检查磁盘权限和恢复记录。",
+  TOOL_RESULT_UNKNOWN: "工具结果尚未核实，不能重复执行。请检查已有产物后手动重新处理。",
   APPROVAL_RESTORED: "备份中的旧审批不可重用，请重新发起目录授权请求。",
   PROJECT_LIMIT: "当前验证版本最多保留 200 个项目。请先整理已有项目。",
   MEMORY_SENSITIVE: "记忆中可能包含敏感信息或凭据，未保存。",
-  MEMORY_FORGOTTEN:
-    "此原始证据受遗忘标记保护。请先在长期记忆中明确允许重新记住。",
+  MEMORY_FORGOTTEN: "此原始证据受遗忘标记保护。请先在长期记忆中明确允许重新记住。",
   MEMORY_CONFLICT: "记忆已更新，请刷新后重试。",
   MEMORY_EVIDENCE_CHANGED: "原始证据的归属或版本已变化，请重新核验来源。",
   MEMORY_NOT_FOUND: "记忆已删除或不可用，请刷新。",
@@ -42,8 +37,7 @@ const messages: Record<string, string> = {
   MODEL_AUTH: "认证失败，请检查 API Key。",
   MODEL_RATE_LIMIT: "服务限流，请稍后手动重试。",
   MODEL_TIMEOUT: "模型请求超时，已有输出已保留。",
-  MODEL_CONNECTION_OR_RESPONSE:
-    "无法连接模型，或返回格式无效。请检查地址和 API 类型后重试。",
+  MODEL_CONNECTION_OR_RESPONSE: "无法连接模型，或返回格式无效。请检查地址和 API 类型后重试。",
   MODEL_STREAM_INTERRUPTED: "流式响应中断，已有输出已保留。",
   MODEL_STREAM_FAILED: "模型返回流式错误，已有输出已保留。",
   MODEL_INCOMPLETE: "模型未完整完成回答，已有输出已保留。",
@@ -54,10 +48,8 @@ const messages: Record<string, string> = {
   BUDGET_EXHAUSTED: "执行预算已用尽。请在 Activity 查看消耗并追加预算后继续。",
   BUDGET_REQUIRED: "请明确追加预算后再继续。",
   APPROVAL_EXPIRED: "审批已过期，请取消后重新处理以获取新审批。",
-  DIRECTORY_CHANGED:
-    "所选目录与原授权不是同一资源，请选择原目录；目录已替换时请重新处理任务。",
-  DIRECTORY_UNAUTHORIZED:
-    "目录授权已失效或撤销，请在 Activity 重新选择同一目录后继续。",
+  DIRECTORY_CHANGED: "所选目录与原授权不是同一资源，请选择原目录；目录已替换时请重新处理任务。",
+  DIRECTORY_UNAUTHORIZED: "目录授权已失效或撤销，请在 Activity 重新选择同一目录后继续。",
   TASK_CONFLICT: "任务已有新修订，请重新加载。",
   INTERRUPTED: "上次执行被应用退出或 Runtime 中断。可手动重试。",
   CANCELLED: "已停止生成。",

@@ -11,10 +11,7 @@ export default defineConfig(({ command }) => ({
       name: "dev-csp",
       transformIndexHtml: (html) =>
         command === "serve"
-          ? html.replace(
-              "script-src 'self'",
-              "script-src 'self' 'unsafe-inline'",
-            )
+          ? html.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'")
           : html,
     },
   ],

@@ -1,12 +1,5 @@
 import { useId, type ButtonHTMLAttributes, type ReactNode } from "react";
-import {
-  Dialog,
-  DropdownMenu,
-  Popover,
-  Select,
-  Switch,
-  Tooltip,
-} from "radix-ui";
+import { Dialog, DropdownMenu, Popover, Select, Switch, Tooltip } from "radix-ui";
 import { Check, ChevronDown, X } from "lucide-react";
 
 export function Button({
@@ -16,13 +9,7 @@ export function Button({
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   kind?: "standard" | "primary" | "plain" | "danger" | "send";
 }) {
-  return (
-    <button
-      type="button"
-      className={`button ${kind} ${className}`}
-      {...props}
-    />
-  );
+  return <button type="button" className={`button ${kind} ${className}`} {...props} />;
 }
 export function IconButton({
   label,
@@ -32,12 +19,7 @@ export function IconButton({
   return (
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
-        <Button
-          kind="plain"
-          className="icon-button"
-          aria-label={label}
-          {...props}
-        >
+        <Button kind="plain" className="icon-button" aria-label={label} {...props}>
           {children}
         </Button>
       </Tooltip.Trigger>
@@ -71,27 +53,16 @@ export function Picker({
       onValueChange={(value) => onChange(value.slice(2))}
       disabled={disabled}
     >
-      <Select.Trigger
-        className={`button picker ${className}`}
-        aria-label={label}
-      >
+      <Select.Trigger className={`button picker ${className}`} aria-label={label}>
         <Select.Value placeholder={label} />
         <ChevronDown size={12} />
       </Select.Trigger>
       <Select.Portal>
-        <Select.Content
-          className="menu picker-menu"
-          position="popper"
-          sideOffset={5}
-        >
+        <Select.Content className="menu picker-menu" position="popper" sideOffset={5}>
           <Select.ScrollUpButton>⌃</Select.ScrollUpButton>
           <Select.Viewport>
             {options.map((option) => (
-              <Select.Item
-                className="menu-item"
-                key={option.value}
-                value={encode(option.value)}
-              >
+              <Select.Item className="menu-item" key={option.value} value={encode(option.value)}>
                 <Select.ItemText>{option.label}</Select.ItemText>
                 <Select.ItemIndicator>
                   <Check size={13} />
@@ -150,13 +121,7 @@ export function MenuItem({
     </DropdownMenu.Item>
   );
 }
-export function MenuSub({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
+export function MenuSub({ title, children }: { title: string; children: ReactNode }) {
   return (
     <DropdownMenu.Sub>
       <DropdownMenu.SubTrigger className="menu-item">
@@ -260,25 +225,14 @@ export function Toggle({
   const id = useId();
   return (
     <label className="row toggle-label" htmlFor={id}>
-      <Switch.Root
-        className="switch"
-        id={id}
-        checked={checked}
-        onCheckedChange={onChange}
-      >
+      <Switch.Root className="switch" id={id} checked={checked} onCheckedChange={onChange}>
         <Switch.Thumb className="switch-thumb" />
       </Switch.Root>
       {children}
     </label>
   );
 }
-export function Field({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
+export function Field({ title, children }: { title: string; children: ReactNode }) {
   return (
     <label className="field">
       <span>{title}</span>
@@ -305,18 +259,9 @@ export function Header({
     </header>
   );
 }
-export function Notice({
-  children,
-  error = false,
-}: {
-  children?: ReactNode;
-  error?: boolean;
-}) {
+export function Notice({ children, error = false }: { children?: ReactNode; error?: boolean }) {
   return children ? (
-    <div
-      className={error ? "notice error" : "notice"}
-      role={error ? "alert" : "status"}
-    >
+    <div className={error ? "notice error" : "notice"} role={error ? "alert" : "status"}>
       {children}
     </div>
   ) : null;

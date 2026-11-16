@@ -1,21 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  render,
-  screen,
-  waitFor,
-  fireEvent,
-} from "@testing-library/react";
+import { cleanup, render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Tooltip } from "radix-ui";
 import { App } from "../app.tsx";
 import { Settings, modelAdditionError, providerName } from "../settings.tsx";
 import { Markdown } from "../components/markdown.tsx";
 import { AssistantStore, StoreContext } from "../store.tsx";
-import type {
-  AssistantSnapshot,
-  AppConfiguration,
-} from "../../shared/model.ts";
+import type { AssistantSnapshot, AppConfiguration } from "../../shared/model.ts";
 import type { DesktopBridge, Payload } from "../../shared/bridge.ts";
 
 const snapshot = (): AssistantSnapshot => ({
@@ -50,17 +41,15 @@ function setup(configuration = config()) {
     preferences: { appearance: "auto", sidebarWidth: 238, positions: {} },
   });
   store.set({ snapshot: snapshot() });
-  const request = vi.fn<DesktopBridge["request"]>(
-    async (method: string, _payload?: Payload) => ({
-      ok: true as const,
-      data:
-        method === "config.get"
-          ? { config: configuration, revision: "revision-a" }
-          : method === "state.get"
-            ? snapshot()
-            : {},
-    }),
-  );
+  const request = vi.fn<DesktopBridge["request"]>(async (method: string, _payload?: Payload) => ({
+    ok: true as const,
+    data:
+      method === "config.get"
+        ? { config: configuration, revision: "revision-a" }
+        : method === "state.get"
+          ? snapshot()
+          : {},
+  }));
   window.tandem = {
     request,
     ready: vi.fn(async () => {}),
@@ -109,9 +98,7 @@ describe("preserved interactions", () => {
     await user.click(screen.getByRole("button", { name: "模型设置" }));
     expect(screen.getByRole("dialog")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "继续编辑" }));
-    expect((screen.getByLabelText("项目名称") as HTMLInputElement).value).toBe(
-      "未保存的项目",
-    );
+    expect((screen.getByLabelText("项目名称") as HTMLInputElement).value).toBe("未保存的项目");
     await user.click(screen.getByRole("button", { name: "模型设置" }));
     await user.click(screen.getByRole("button", { name: "放弃修改并离开" }));
     await screen.findByRole("button", { name: "保存配置" });
@@ -140,8 +127,7 @@ describe("preserved interactions", () => {
     wrap(<App />);
     const user = userEvent.setup();
     const title = () => screen.getByLabelText("项目名称") as HTMLInputElement;
-    const description = () =>
-      screen.getByLabelText("目标或说明") as HTMLTextAreaElement;
+    const description = () => screen.getByLabelText("目标或说明") as HTMLTextAreaElement;
 
     await user.click(screen.getByRole("button", { name: "项目" }));
     await user.click(screen.getByRole("button", { name: "项目 A" }));
@@ -186,30 +172,23 @@ describe("preserved interactions", () => {
     await user.click(screen.getByRole("button", { name: "添加供应商" }));
     await user.type(screen.getByLabelText("供应商名称"), "我的模型");
     await user.type(screen.getByLabelText("新模型名称"), " model-a ");
-    expect(
-      (screen.getByRole("button", { name: "保存配置" }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
+    expect((screen.getByRole("button", { name: "保存配置" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
     await user.click(screen.getByRole("button", { name: "添加" }));
     request.mockImplementation(async (method, payload) => ({
       ok: true,
       data:
-        method === "config.save"
-          ? { config: payload!.config, revision: "revision-b" }
-          : snapshot(),
+        method === "config.save" ? { config: payload!.config, revision: "revision-b" } : snapshot(),
     }));
     await user.click(screen.getByRole("button", { name: "保存配置" }));
     await screen.findByText("已保存。");
-    const payload = request.mock.calls.find(
-      ([method]) => method === "config.save",
-    )![1]!;
+    const payload = request.mock.calls.find(([method]) => method === "config.save")![1]!;
     expect(payload.expectedRevision).toBe("revision-a");
-    expect(
-      (payload.config as AppConfiguration).modelConnections[0]!.modelNames,
-    ).toEqual(["model-a"]);
-    expect((payload.config as AppConfiguration).modelConnections[0]!.name).toBe(
-      "我的模型",
-    );
+    expect((payload.config as AppConfiguration).modelConnections[0]!.modelNames).toEqual([
+      "model-a",
+    ]);
+    expect((payload.config as AppConfiguration).modelConnections[0]!.name).toBe("我的模型");
   });
   it("removing the default model clears only its matching default selection", async () => {
     const configuration: AppConfiguration = {
@@ -232,16 +211,12 @@ describe("preserved interactions", () => {
     await user.click(await screen.findByRole("button", { name: "移除模型 a" }));
     request.mockImplementation(async (method, payload) => ({
       ok: true,
-      data:
-        method === "config.save"
-          ? { config: payload!.config, revision: "b" }
-          : snapshot(),
+      data: method === "config.save" ? { config: payload!.config, revision: "b" } : snapshot(),
     }));
     await user.click(screen.getByRole("button", { name: "保存配置" }));
     await screen.findByText("已保存。");
-    const saved = request.mock.calls.find(
-      ([method]) => method === "config.save",
-    )![1]!.config as AppConfiguration;
+    const saved = request.mock.calls.find(([method]) => method === "config.save")![1]!
+      .config as AppConfiguration;
     expect(saved.defaultModel).toBeNull();
     expect(saved.modelConnections[0]!.id).toBe("provider");
     expect(saved.modelConnections[0]!.modelNames).toEqual(["b"]);
@@ -284,9 +259,7 @@ describe("preserved interactions", () => {
     expect(screen.queryByRole("button", { name: "确认永久删除" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "预览永久删除…" }));
     await screen.findByRole("button", { name: "确认永久删除" });
-    expect(
-      request.mock.calls.some(([method]) => method === "project.delete"),
-    ).toBe(false);
+    expect(request.mock.calls.some(([method]) => method === "project.delete")).toBe(false);
   });
   it("does not send while composing Chinese input", async () => {
     const { store, wrap } = setup();
@@ -319,9 +292,7 @@ describe("content and delivery boundaries", () => {
     await user.click(screen.getByRole("button", { name: "复制代码" }));
     expect(window.tandem.copy).toHaveBeenCalledWith("const value = 1;");
     await user.click(screen.getByRole("link", { name: "文档" }));
-    expect(window.tandem.openExternal).toHaveBeenCalledWith(
-      "https://example.com/docs",
-    );
+    expect(window.tandem.openExternal).toHaveBeenCalledWith("https://example.com/docs");
   });
   it("reuses an idempotency key after a lost send acknowledgement and preserves edits made in flight", async () => {
     const { store, request } = setup();
@@ -340,9 +311,7 @@ describe("content and delivery boundaries", () => {
     await store.send();
     expect(store.state.draft).toBe("hello");
     await store.send();
-    const sends = request.mock.calls.filter(
-      ([method]) => method === "message.send",
-    );
+    const sends = request.mock.calls.filter(([method]) => method === "message.send");
     expect(sends[0]![1]!.idempotencyKey).toBe(sends[1]![1]!.idempotencyKey);
     expect(store.state.draft).toBe("new draft");
     expect(store.state.sending).toBe(false);

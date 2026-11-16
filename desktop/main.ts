@@ -1,13 +1,4 @@
-import {
-  app,
-  BrowserWindow,
-  Menu,
-  ipcMain,
-  dialog,
-  shell,
-  clipboard,
-  nativeTheme,
-} from "electron";
+import { app, BrowserWindow, Menu, ipcMain, dialog, shell, clipboard, nativeTheme } from "electron";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -18,9 +9,7 @@ import { allowsExternal } from "../shared/conversation.ts";
 import type { Payload, Preferences, Reply } from "../shared/bridge.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const testing =
-  process.argv.includes("--smoke-test") ||
-  process.argv.includes("--lifecycle-test");
+const testing = process.argv.includes("--smoke-test") || process.argv.includes("--lifecycle-test");
 const dataDirectory = testing ? process.env.TANDEM_TEST_DATA_DIR : undefined;
 if (testing && !dataDirectory) throw new Error("TEST_DATA_DIRECTORY_REQUIRED");
 app.setName("Tandem");
@@ -28,9 +17,7 @@ if (testing) app.setPath("userData", join(dataDirectory!, "electron-ui"));
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   const runtime = new RuntimeSupervisor(
-    app.isPackaged
-      ? join(root, "node")
-      : (process.env.TANDEM_NODE ?? join(root, "node")),
+    app.isPackaged ? join(root, "node") : (process.env.TANDEM_NODE ?? join(root, "node")),
     join(root, "runtime/main.js"),
     dataDirectory,
   );
@@ -45,10 +32,8 @@ else {
     quitReady = false;
   function createWindow() {
     const claimed = new Set(surfaces.values());
-    const preferred =
-      surfaces.size === 0 ? preferences.value.lastSurface : undefined;
-    const surface =
-      preferred && !claimed.has(preferred) ? preferred : randomUUID();
+    const preferred = surfaces.size === 0 ? preferences.value.lastSurface : undefined;
+    const surface = preferred && !claimed.has(preferred) ? preferred : randomUUID();
     const win = new BrowserWindow({
       title: "Tandem",
       width: 1280,
@@ -78,12 +63,10 @@ else {
     win.webContents.on("will-navigate", (event, url) => {
       if (!validURL(url)) event.preventDefault();
     });
-    win.webContents.session.setPermissionRequestHandler(
-      (_contents, _permission, callback) => callback(false),
+    win.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
+      callback(false),
     );
-    win.webContents.on("will-attach-webview", (event) =>
-      event.preventDefault(),
-    );
+    win.webContents.on("will-attach-webview", (event) => event.preventDefault());
     if (devURL) void win.loadURL(devURL);
     else void win.loadFile(join(root, "renderer/index.html"));
     return win;
@@ -99,18 +82,14 @@ else {
       throw new Error("UNAUTHORIZED");
     return { win, surfaceId: surfaces.get(event.sender.id)! };
   }
-  const reply = async (
-    action: () => Promise<unknown> | unknown,
-  ): Promise<Reply> => {
+  const reply = async (action: () => Promise<unknown> | unknown): Promise<Reply> => {
     try {
       return { ok: true, data: await action() };
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       return {
         ok: false,
-        error: /^[A-Z][A-Z0-9_]*$/.test(message)
-          ? message
-          : "LOCAL_STORAGE_ERROR",
+        error: /^[A-Z][A-Z0-9_]*$/.test(message) ? message : "LOCAL_STORAGE_ERROR",
       };
     }
   };
@@ -129,29 +108,24 @@ else {
   ipcMain.handle("tandem:request", (event, method: unknown, payload: unknown) =>
     reply(() => {
       const { surfaceId } = host(event);
-      return runtime.request(
-        String(method),
-        scopedPayload(method, payload, surfaceId),
-      );
+      return runtime.request(String(method), scopedPayload(method, payload, surfaceId));
     }),
   );
-  ipcMain.handle(
-    "tandem:directory",
-    (event, projectId: unknown, renewing: unknown) =>
-      reply(async () => {
-        const { win } = host(event);
-        if (
-          (projectId !== null && typeof projectId !== "string") ||
-          (renewing !== undefined && typeof renewing !== "string")
-        )
-          throw new Error("INVALID_REQUEST");
-        const result = await dialog.showOpenDialog(win, {
-          properties: ["openDirectory"],
-          buttonLabel: "授权只读",
-        });
-        if (result.canceled) return null;
-        return runtime.authorize(result.filePaths[0]!, projectId, renewing);
-      }),
+  ipcMain.handle("tandem:directory", (event, projectId: unknown, renewing: unknown) =>
+    reply(async () => {
+      const { win } = host(event);
+      if (
+        (projectId !== null && typeof projectId !== "string") ||
+        (renewing !== undefined && typeof renewing !== "string")
+      )
+        throw new Error("INVALID_REQUEST");
+      const result = await dialog.showOpenDialog(win, {
+        properties: ["openDirectory"],
+        buttonLabel: "授权只读",
+      });
+      if (result.canceled) return null;
+      return runtime.authorize(result.filePaths[0]!, projectId, renewing);
+    }),
   );
   ipcMain.handle("tandem:revoke", (event, id: unknown) =>
     reply(async () => {
@@ -190,16 +164,11 @@ else {
     const updates: Partial<Preferences> = {};
     if (["auto", "light", "dark"].includes(String(input.appearance)))
       updates.appearance = input.appearance as Preferences["appearance"];
-    if (
-      typeof input.sidebarWidth === "number" &&
-      Number.isFinite(input.sidebarWidth)
-    )
+    if (typeof input.sidebarWidth === "number" && Number.isFinite(input.sidebarWidth))
       updates.sidebarWidth = input.sidebarWidth;
     preferences.update(updates);
     nativeTheme.themeSource =
-      preferences.value.appearance === "auto"
-        ? "system"
-        : preferences.value.appearance;
+      preferences.value.appearance === "auto" ? "system" : preferences.value.appearance;
     for (const win of BrowserWindow.getAllWindows())
       win.webContents.send("tandem:preferences-changed", {
         appearance: preferences.value.appearance,
@@ -227,8 +196,7 @@ else {
   });
   ipcMain.handle("tandem:external", async (event, url: unknown) => {
     host(event);
-    if (typeof url !== "string" || !allowsExternal(url))
-      throw new Error("INVALID_REQUEST");
+    if (typeof url !== "string" || !allowsExternal(url)) throw new Error("INVALID_REQUEST");
     await shell.openExternal(url);
   });
   ipcMain.handle("tandem:copy", (event, text: unknown) => {
@@ -268,9 +236,7 @@ else {
     .whenReady()
     .then(async () => {
       nativeTheme.themeSource =
-        preferences.value.appearance === "auto"
-          ? "system"
-          : preferences.value.appearance;
+        preferences.value.appearance === "auto" ? "system" : preferences.value.appearance;
       Menu.setApplicationMenu(
         Menu.buildFromTemplate([
           { role: "appMenu" },

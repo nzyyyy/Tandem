@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.pnpm-store/
+.codegraph/
+docs/
+resources/
+renderer/style.css
+*.md
+pnpm-lock.yaml
