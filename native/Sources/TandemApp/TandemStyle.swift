@@ -39,17 +39,24 @@ enum TandemAppearance {
 
 struct PageHeader<Actions: View>: View {
     let title: String
+    var subtitle: String? = nil
     @ViewBuilder var actions: Actions
     var body: some View {
         HStack(spacing: 12) {
-            Text(title).font(.system(size: 17, weight: .semibold))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 20, weight: .semibold))
+                if let subtitle {
+                    Text(subtitle).font(.system(size: 12)).foregroundStyle(TandemStyle.secondary)
+                        .lineLimit(1).help(subtitle)
+                }
+            }
             Spacer(minLength: 12)
             actions
         }
-        .controlSize(.large)
-        .padding(.horizontal, 32).padding(.vertical, 16)
+        .frame(minHeight: 44)
+        .controlSize(.regular)
+        .padding(.horizontal, 28).padding(.vertical, 16)
         .background(TandemStyle.canvas)
-        .overlay(alignment: .bottom) { Divider() }
     }
 }
 
@@ -63,18 +70,18 @@ struct SelectionRow: View {
     @FocusState private var focused: Bool
     var body: some View {
         Button { focused = false; action() } label: {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: symbol).font(.system(size: 17)).frame(width: 22)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(title).font(.system(size: 14, weight: selected ? .semibold : .regular)).lineLimit(2)
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: symbol).font(.system(size: 16)).frame(width: 20)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.system(size: 13, weight: selected ? .semibold : .regular)).lineLimit(2)
                     if let subtitle { Text(subtitle).font(.caption).foregroundStyle(TandemStyle.secondary).lineLimit(2) }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .foregroundStyle(selected ? TandemStyle.accent : TandemStyle.ink)
-            .padding(12)
+            .padding(.horizontal, 12).padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? TandemStyle.selection : hovered ? TandemStyle.hover : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .background(selected ? TandemStyle.selection : hovered ? TandemStyle.hover : .clear, in: RoundedRectangle(cornerRadius: 9))
             .contentShape(Rectangle())
         }
         .buttonStyle(TandemButtonStyle(.plain))
@@ -102,7 +109,7 @@ struct TandemTextFieldStyle: TextFieldStyle {
     func _body(configuration: TextField<Self._Label>) -> some View {
         configuration
             .textFieldStyle(.plain).font(.system(size: 14))
-            .padding(12).focused($focused)
+            .padding(10).focused($focused)
             .background(TandemStyle.canvas, in: RoundedRectangle(cornerRadius: 8))
             .overlay { RoundedRectangle(cornerRadius: 8).stroke(focused ? TandemStyle.accent : TandemStyle.border, lineWidth: focused ? 2 : 1) }
     }
@@ -124,7 +131,7 @@ struct EditorSelection {
 }
 
 struct TandemButtonStyle: ButtonStyle {
-    enum Kind { case standard, primary, plain }
+    enum Kind { case standard, primary, plain, send }
     var kind: Kind = .standard
     @Environment(\.isEnabled) private var enabled
     @Environment(\.isFocused) private var focused
@@ -136,23 +143,24 @@ struct TandemButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(configuration.role == .destructive ? Color.red : kind == .primary ? TandemStyle.onAccent : TandemStyle.ink)
-            .padding(.horizontal, kind == .plain ? 0 : controlSize == .small ? 8 : 14)
-            .padding(.vertical, kind == .plain ? 0 : controlSize == .small ? 8 : 9)
-            .background(background, in: RoundedRectangle(cornerRadius: 8))
+            .foregroundStyle(configuration.role == .destructive ? Color.red : kind == .primary || kind == .send ? TandemStyle.onAccent : TandemStyle.ink)
+            .padding(.horizontal, kind == .plain ? 0 : kind == .send || controlSize == .small ? 8 : 12)
+            .padding(.vertical, kind == .plain ? 0 : kind == .send || controlSize == .small ? 8 : 9)
+            .background(background, in: RoundedRectangle(cornerRadius: kind == .send ? 16 : 10))
             .overlay {
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: kind == .send ? 16 : 10)
                     .stroke(focused ? TandemStyle.accent : kind == .standard ? TandemStyle.border : .clear, lineWidth: focused ? 2 : 1)
             }
+            .shadow(color: kind == .standard ? TandemStyle.ink.opacity(0.05) : .clear, radius: 3, y: 2)
             .opacity(!enabled ? 0.45 : configuration.isPressed ? 0.75 : 1)
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(RoundedRectangle(cornerRadius: kind == .send ? 16 : 10))
             .onHover { hovered = $0 }
             .focusEffectDisabled()
     }
     private var background: Color {
         switch kind {
-        case .primary: return TandemStyle.accent
-        case .standard: return hovered && enabled ? TandemStyle.hover : TandemStyle.canvas
+        case .primary, .send: return TandemStyle.accent
+        case .standard: return hovered && enabled ? TandemStyle.hover : TandemStyle.surface
         case .plain: return .clear
         }
     }
@@ -172,10 +180,11 @@ struct TandemMenuLabel<Content: View>: View {
         }
         .font(.system(size: 13, weight: .medium)).foregroundStyle(TandemStyle.ink)
         .padding(.horizontal, 12).padding(.vertical, controlSize == .small ? 8 : 9)
-        .background(hovered && enabled ? TandemStyle.hover : TandemStyle.canvas, in: RoundedRectangle(cornerRadius: 8))
-        .overlay { RoundedRectangle(cornerRadius: 8).stroke(focused ? TandemStyle.accent : TandemStyle.border, lineWidth: focused ? 2 : 1) }
+        .background(hovered && enabled ? TandemStyle.hover : TandemStyle.surface, in: RoundedRectangle(cornerRadius: 10))
+        .overlay { RoundedRectangle(cornerRadius: 10).stroke(focused ? TandemStyle.accent : TandemStyle.border, lineWidth: focused ? 2 : 1) }
+        .shadow(color: TandemStyle.ink.opacity(0.05), radius: 3, y: 2)
         .opacity(enabled ? 1 : 0.45)
-        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .contentShape(RoundedRectangle(cornerRadius: 10))
         .onHover { hovered = $0 }
     }
 }

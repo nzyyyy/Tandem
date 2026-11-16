@@ -87,7 +87,7 @@ struct AssistantView: View {
             HStack(spacing: 10) {
                 Image(systemName: "circle.lefthalf.filled")
                     .foregroundStyle(TandemStyle.onAccent).padding(8)
-                    .background(TandemStyle.accent, in: RoundedRectangle(cornerRadius: 9))
+                    .background(TandemStyle.accent, in: RoundedRectangle(cornerRadius: 10))
                 Text("Tandem").font(.system(size: 22, weight: .semibold))
             }
             .padding(.top, 46).padding(.horizontal, 20).padding(.bottom, 24)
@@ -117,11 +117,14 @@ struct AssistantView: View {
                 Divider()
                 appearanceSwitcher
                 Button { showDiagnostics = true } label: {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("运行状态", systemImage: "waveform.path").font(.system(size: 13, weight: .medium))
-                        Text("本地运行 · \(runtime.status)").font(.caption).foregroundStyle(TandemStyle.secondary)
+                    HStack(spacing: 9) {
+                        Image(systemName: runtime.isConnected ? "circle.fill" : "circle")
+                            .font(.system(size: 6)).foregroundStyle(TandemStyle.secondary).accessibilityHidden(true)
+                        Text("本地运行").font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(TandemStyle.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8).contentShape(Rectangle())
-                }.buttonStyle(.plain)
+                }.buttonStyle(.plain).help(runtime.status).accessibilityLabel("本地运行：" + runtime.status)
             }.padding(20)
         }
         .background(TandemStyle.surface)
@@ -187,18 +190,20 @@ struct AssistantView: View {
     private var conversation: some View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
-                PageHeader(title: "对话") {
+                PageHeader(title: "对话", subtitle: activeTitle) {
                     if let interrupted = model.snapshot?.focus.interruptedSessionId {
                         Button("恢复原话题") { Task { await model.focus(interrupted) } }
                     }
                     Menu { topicActions } label: { TandemMenuLabel { Label("新话题", systemImage: "square.and.pencil") } }
                         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().focusEffectDisabled()
                 }
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 16) { topicTitle; Spacer(); historyFilter }
-                    VStack(alignment: .leading, spacing: 12) { topicTitle; historyFilter }
+                HStack {
+                    Text("全部话题").font(.caption).foregroundStyle(TandemStyle.secondary)
+                    Spacer()
+                    historyFilter
                 }
-                .padding(.horizontal, 32).padding(.vertical, 16)
+                .padding(.horizontal, 28).padding(.bottom, 12)
+                .overlay(alignment: .bottom) { Divider().padding(.horizontal, 28) }
             }
             .contentShape(Rectangle())
             .onTapGesture { composerFocused = false }
@@ -209,7 +214,7 @@ struct AssistantView: View {
                                        ready: readingPositionReady && navigation.value == "assistant", sending: model.sending,
                                        navigationHeight: max(0, geometry.size.height - 24), savePosition: saveReadingPosition,
                                        onScrollSettled: { if !readingPositionReady { scrollSettled = true } }) {
-                    LazyVStack(alignment: .leading, spacing: 32) {
+                    LazyVStack(alignment: .leading, spacing: 24) {
                         if model.hasMore { Button("加载更早的消息") { Task { await model.loadEarlier() } }.frame(maxWidth: .infinity) }
                         if model.snapshot == nil {
                             VStack(alignment: .leading, spacing: 16) {
@@ -244,7 +249,7 @@ struct AssistantView: View {
                                         }.padding(.vertical, 4)
                                     }
                                     MessageView(message: message, model: model,
-                                                maximumWidth: max(1, min(724, geometry.size.width - 64)) * 0.7) {
+                                                maximumWidth: max(1, min(724, geometry.size.width - 56)) * 0.7) {
                                         detailMessageId = message.id
                                     }
                                 } else if let pending = model.snapshot?.pendingInteractions.first(where: { $0.sequence == sequence }) {
@@ -263,7 +268,7 @@ struct AssistantView: View {
                     }
                     .scrollTargetLayout()
                     .frame(maxWidth: 724, alignment: .leading)
-                    .padding(.horizontal, 32).padding(.vertical, 24)
+                    .padding(.horizontal, 28).padding(.vertical, 24)
                     .frame(maxWidth: .infinity)
                 }
                 // Hidden until the saved reading position is restored; otherwise the list visibly jumps
@@ -323,18 +328,15 @@ struct AssistantView: View {
                                                      atBottom: viewport.isNearBottom, projectFilter: filterProject), for: surfaceId)
     }
 
-    private var topicTitle: some View {
-        Text("当前话题：" + activeTitle).font(.system(size: 13)).foregroundStyle(TandemStyle.secondary).lineLimit(1).help(activeTitle)
-    }
     private var historyFilter: some View {
         TandemPicker(title: "历史筛选", value: historyFilterTitle, selection: $filterProject) {
-            Text("全部项目历史").tag("*")
+            Text("全部项目").tag("*")
             Text("未关联项目").tag("")
             ForEach(model.snapshot?.projects ?? []) { Text($0.title + ($0.status == "archived" ? "（归档）" : "")).tag($0.id) }
-        }.labelsHidden().frame(width: 190).accessibilityLabel("历史筛选")
+        }.labelsHidden().frame(width: 170).controlSize(.small).accessibilityLabel("历史筛选")
     }
     private var historyFilterTitle: String {
-        if filterProject == "*" { return "全部项目历史" }
+        if filterProject == "*" { return "全部项目" }
         guard let project = model.snapshot?.projects.first(where: { $0.id == filterProject }) else { return "未关联项目" }
         return project.title + (project.status == "archived" ? "（归档）" : "")
     }
@@ -359,12 +361,17 @@ struct AssistantView: View {
                     HStack(spacing: 12) {
                         if model.createTask {
                             Button { model.createTask = false } label: { Label("持续任务", systemImage: "xmark.circle.fill") }
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                                .background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 7))
                                 .help("取消持续任务，保留已填写的要求")
                         }
                         if model.newTopic || model.temporary {
                             Button { model.newTopic = false; model.temporary = false } label: {
-                                Label(model.temporary ? "下条为临时插话" : "下条为新话题", systemImage: "xmark.circle.fill")
+                                Label(model.temporary ? "临时插话" : "新话题", systemImage: "xmark.circle.fill")
                             }
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 7))
+                            .accessibilityLabel(model.temporary ? "取消临时插话" : "取消新话题")
                         }
                     }.buttonStyle(TandemButtonStyle(.plain)).font(.caption).foregroundStyle(TandemStyle.accent)
                 }
@@ -374,14 +381,14 @@ struct AssistantView: View {
                             .accessibilityLabel("预期交付物")
                         TextField("完成标准，每行一条", text: $model.taskCriteria, axis: .vertical).lineLimit(2...5)
                             .accessibilityLabel("完成标准")
-                    }.textFieldStyle(.roundedBorder).font(.callout)
+                    }.textFieldStyle(TandemTextFieldStyle()).font(.callout)
                 }
                 TextField("输入消息…", text: $model.draft, axis: .vertical)
                     .font(.system(size: 15)).lineLimit(2...7).textFieldStyle(.plain)
                     .focused($composerFocused)
                     .onSubmit { Task { await model.send() } }
                     .accessibilityLabel("消息内容")
-                HStack(alignment: .center, spacing: 10) {
+                HStack(alignment: .center, spacing: 8) {
                     Menu {
                         Toggle("持续任务", isOn: $model.createTask)
                         Divider()
@@ -395,22 +402,24 @@ struct AssistantView: View {
                         Text(defaultModelTitle).tag("")
                         ForEach(model.snapshot?.models ?? []) { option in Text("\(option.modelName) · \(model.connectionTitle(option.connectionId))").tag(option.id) }
                         if !model.selectedModel.isEmpty && !(model.snapshot?.models.contains { $0.id == model.selectedModel } ?? false) { Text("所选模型已失效").tag(model.selectedModel) }
-                    }.labelsHidden().frame(maxWidth: 240).accessibilityLabel("模型").help(selectedModelTitle)
+                    }.labelsHidden().frame(maxWidth: 240, alignment: .trailing).fixedSize(horizontal: true, vertical: false)
+                        .padding(.trailing, 24).accessibilityLabel("模型").help(selectedModelTitle)
                     Button { Task { await model.send() } } label: {
                         Image(systemName: "arrow.up").font(.system(size: 14, weight: .semibold)).frame(width: 16, height: 16)
                     }
-                    .buttonStyle(TandemButtonStyle(.primary))
+                    .buttonStyle(TandemButtonStyle(.send))
                     .disabled(model.sending || model.snapshot == nil || model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .keyboardShortcut(.return, modifiers: .command)
                     .help("发送消息（⌘Return）").accessibilityLabel("发送消息")
                 }.controlSize(.small).padding(.top, 8)
             }
-            .padding(.horizontal, 18).padding(.top, 18).padding(.bottom, 10)
-            .background(TandemStyle.canvas, in: RoundedRectangle(cornerRadius: 14))
-            .overlay { RoundedRectangle(cornerRadius: 14).stroke(TandemStyle.inputBorder, lineWidth: 1) }
+            .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 10)
+            .background(TandemStyle.canvas, in: RoundedRectangle(cornerRadius: 18))
+            .overlay { RoundedRectangle(cornerRadius: 18).stroke(composerFocused ? TandemStyle.secondary : TandemStyle.inputBorder, lineWidth: 1) }
+            .shadow(color: TandemStyle.ink.opacity(0.05), radius: 10, y: 4)
         }
-        .frame(maxWidth: 724).padding(.horizontal, 32).padding(.top, 12).padding(.bottom, 20)
-        .frame(maxWidth: .infinity).background(TandemStyle.canvas)
+        .frame(maxWidth: 724).padding(.horizontal, 28).padding(.bottom, 20)
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder private var appearanceSwitcher: some View {
@@ -530,24 +539,30 @@ struct MessageView: View {
                 }
             }
             .padding(isUser ? 16 : 0)
-            .background(isUser ? TandemStyle.surface : .clear, in: RoundedRectangle(cornerRadius: 16))
-            Menu {
-                Button(isUser ? "复制消息" : "复制 Markdown") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(message.content, forType: .string)
-                }
-                Button("消息详情与来源", action: showDetails)
-                if message.interactionId != nil {
-                    Menu("纠正项目归属") {
-                        Button("未关联项目") { Task { await model.correct(message, projectId: "") } }
-                        ForEach((model.snapshot?.projects ?? []).filter { $0.status == "open" }) { project in
-                            Button(project.title) { Task { await model.correct(message, projectId: project.id) } }
+            .background(isUser ? TandemStyle.surface : .clear, in: UnevenRoundedRectangle(
+                topLeadingRadius: 16, bottomLeadingRadius: 16, bottomTrailingRadius: 5, topTrailingRadius: 16))
+            HStack(spacing: 12) {
+                Text(model.projectTitle(message.projectId)).font(.caption).foregroundStyle(TandemStyle.secondary).lineLimit(1)
+                Button(action: showDetails) { Label("详情与来源", systemImage: "text.magnifyingglass").font(.caption) }
+                    .buttonStyle(.plain).foregroundStyle(TandemStyle.secondary).fixedSize()
+                Menu {
+                    Button(isUser ? "复制消息" : "复制 Markdown") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(message.content, forType: .string)
+                    }
+                    Button("消息详情与来源", action: showDetails)
+                    if message.interactionId != nil {
+                        Menu("纠正项目归属") {
+                            Button("未关联项目") { Task { await model.correct(message, projectId: "") } }
+                            ForEach((model.snapshot?.projects ?? []).filter { $0.status == "open" }) { project in
+                                Button(project.title) { Task { await model.correct(message, projectId: project.id) } }
+                            }
                         }
                     }
-                }
-            } label: { Image(systemName: "ellipsis").frame(width: 24, height: 22) }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .foregroundStyle(TandemStyle.secondary).help("消息详情与项目归属").accessibilityLabel("消息操作")
+                } label: { Image(systemName: "ellipsis").frame(width: 24, height: 22) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .foregroundStyle(TandemStyle.secondary).help("消息详情与项目归属").accessibilityLabel("消息操作")
+            }
         }
         .frame(maxWidth: isUser ? maximumWidth : .infinity, alignment: isUser ? .trailing : .leading)
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)

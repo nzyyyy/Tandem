@@ -86,7 +86,8 @@ struct ActivityView: View {
                                     }
                                 }
                             }
-                        }.padding(16).background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+                        }.padding(.vertical, 16).frame(maxWidth: .infinity, alignment: .leading)
+                            .overlay(alignment: .bottom) { Divider() }
                     }
                     Text("执行记录").font(.title3.weight(.semibold))
                     ForEach(model.snapshot?.activity.runs ?? []) { run in
@@ -131,9 +132,10 @@ struct ActivityView: View {
                                     }
                                 }
                             }
-                        }.padding(16).background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+                        }.padding(.vertical, 16).frame(maxWidth: .infinity, alignment: .leading)
+                            .overlay(alignment: .bottom) { Divider() }
                     }
-                }.padding(28)
+                }.padding(28).frame(maxWidth: 1060, alignment: .leading).frame(maxWidth: .infinity)
             }
         }
         .sheet(isPresented: Binding(get: { result != nil }, set: { if !$0 { result = nil } })) {

@@ -34,32 +34,46 @@ final class ConversationLayoutTests: XCTestCase {
     func testUserBubblesStayCompactOnTheRightAndLongTextWraps() async throws {
         try await MainActor.run {
             let model = AssistantModel(runtime: RuntimeSupervisor())
-            @MainActor func render(_ content: String) throws -> NSBitmapImageRep {
+            @MainActor func render(_ content: String, trailingInset: CGFloat = 0) throws -> NSBitmapImageRep {
                 let data = try JSONSerialization.data(withJSONObject: ["id": "test", "sessionId": "topic", "sequence": 1, "role": "user", "content": content])
                 let message = try JSONDecoder().decode(TimelineMessage.self, from: data)
                 let view = MessageView(message: message, model: model, maximumWidth: 420, showDetails: {})
-                    .frame(width: 600).background(Color.white).environment(\.colorScheme, .light)
+                    .padding(.trailing, trailingInset).frame(width: 600)
+                    .background(alignment: .topLeading) { TandemStyle.surface.frame(width: 8, height: 8) }
+                    .background(Color.white)
                 let renderer = ImageRenderer(content: view)
                 renderer.scale = 1
                 let rendered = renderer.cgImage
                 let image = try XCTUnwrap(rendered)
                 return NSBitmapImageRep(cgImage: image)
             }
-            func bubblePixels(_ image: NSBitmapImageRep) -> [Int] {
-                (0..<image.pixelsWide).filter { x in
+            func bubblePixels(_ image: NSBitmapImageRep) throws -> [Int] {
+                // Sample the same rendered material so appearance and color conversion cannot skew the bounds.
+                let surface = try XCTUnwrap(image.colorAt(x: 4, y: 4)?.usingColorSpace(.sRGB))
+                return (0..<image.pixelsWide).filter { x in
                     guard let color = image.colorAt(x: x, y: 18)?.usingColorSpace(.sRGB) else { return false }
-                    return abs(color.redComponent - 242.0 / 255) < 0.012 && abs(color.greenComponent - 245.0 / 255) < 0.012 && abs(color.blueComponent - 243.0 / 255) < 0.012
+                    return abs(color.redComponent - surface.redComponent) < 0.004 &&
+                        abs(color.greenComponent - surface.greenComponent) < 0.004 &&
+                        abs(color.blueComponent - surface.blueComponent) < 0.004
                 }
             }
-            let short = try render("快要下班了")
-            let shortPixels = bubblePixels(short)
-            XCTAssertGreaterThan(try XCTUnwrap(shortPixels.first), 450, "Short messages should not stretch to fill the maximum bubble width")
-            XCTAssertGreaterThan(try XCTUnwrap(shortPixels.last), 590, "User bubbles should reach the right edge")
-            let long = try render(String(repeating: "这是一条需要换行的长消息。", count: 12))
-            let longPixels = bubblePixels(long)
-            XCTAssertGreaterThanOrEqual(try XCTUnwrap(longPixels.first), 180, "Long user messages must stay within 70% of the conversation width")
-            XCTAssertLessThan(try XCTUnwrap(longPixels.first), 220)
-            XCTAssertGreaterThan(long.pixelsHigh, short.pixelsHigh, "Long messages must wrap instead of clipping")
+            let app = NSApplication.shared
+            let originalAppearance = app.appearance
+            defer { app.appearance = originalAppearance }
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                app.appearance = NSAppearance(named: appearance)
+                let short = try render("快要下班了")
+                let shortPixels = try bubblePixels(short)
+                XCTAssertGreaterThan(try XCTUnwrap(shortPixels.first), 450, "Short messages should not stretch to fill the maximum bubble width")
+                XCTAssertGreaterThan(try XCTUnwrap(shortPixels.last), 590, "User bubbles should reach the right edge")
+                let long = try render(String(repeating: "这是一条需要换行的长消息。", count: 12))
+                let longPixels = try bubblePixels(long)
+                XCTAssertGreaterThanOrEqual(try XCTUnwrap(longPixels.first), 180, "Long user messages must stay within 70% of the conversation width")
+                XCTAssertLessThan(try XCTUnwrap(longPixels.first), 220)
+                XCTAssertGreaterThan(long.pixelsHigh, short.pixelsHigh, "Long messages must wrap instead of clipping")
+                let insetPixels = try bubblePixels(render("快要下班了", trailingInset: 40))
+                XCTAssertLessThan(try XCTUnwrap(insetPixels.last), 570, "The pixel check must detect a bubble that is genuinely inset")
+            }
         }
     }
 
@@ -83,6 +97,33 @@ final class ConversationLayoutTests: XCTestCase {
             let frame = try XCTUnwrap(driver.frames[sequence], "First target \(sequence), measured: \(driver.frames.keys.sorted())")
             XCTAssertEqual(frame.minY, 0, accuracy: 2, "First jump to question \(sequence) must align without traversing history")
         }
+    }
+
+    @MainActor func testHistoryStopsAtComposerTopAndKeepsLastMessageVisible() async throws {
+        _ = NSApplication.shared
+        let messages = try navigationMessages()
+        let driver = NavigationScrollDriver()
+        let host = NSHostingView(rootView: NavigationScrollFixture(driver: driver, messages: messages, composerHeight: 140))
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 900, height: 600),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.contentView = nil; window.close() }
+        try await settleLayout(host)
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        let scroll = try XCTUnwrap(descendants(host).compactMap { $0 as? NSScrollView }.max {
+            $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height
+        })
+        let lastFrame = try XCTUnwrap(driver.frames[try XCTUnwrap(messages.last?.sequence)])
+        XCTAssertEqual(scroll.bounds.height, 460, accuracy: 1, "History must stop at the composer's top edge")
+        XCTAssertEqual(driver.composerFrame.minY, 460, accuracy: 1)
+        XCTAssertEqual(scroll.bounds.height, driver.composerFrame.minY, accuracy: 1, "There must be no blank strip above the composer")
+        XCTAssertLessThanOrEqual(lastFrame.maxY, driver.composerFrame.minY, "The last message must scroll clear of the composer")
+        XCTAssertTrue(driver.viewport.isAtBottom)
+        driver.position.scrollTo(y: 0)
+        try await settleLayout(host)
+        XCTAssertFalse(driver.viewport.isAtBottom, "The covered region must not count as readable history")
+        XCTAssertFalse(driver.viewport.isNearBottom)
     }
 
     @MainActor private func settleLayout(_ host: NSView) async throws {
@@ -197,30 +238,42 @@ final class ConversationLayoutTests: XCTestCase {
     @Published var position = ScrollPosition(edge: .bottom)
     var viewport = ConversationViewport()
     var frames: [Int: CGRect] = [:]
+    var composerFrame = CGRect.zero
 }
 
 private struct NavigationScrollFixture: View {
     @ObservedObject var driver: NavigationScrollDriver
     let messages: [TimelineMessage]
+    var composerHeight: CGFloat = 0
     @StateObject private var model = AssistantModel(runtime: RuntimeSupervisor())
 
     var body: some View {
-        ConversationScrollView(position: $driver.position, messages: messages, lastSequence: messages.last?.sequence,
-                               ready: true, sending: false, navigationHeight: 560, savePosition: { driver.viewport = $0 }) {
-            LazyVStack(alignment: .leading, spacing: 32) {
-                ForEach(messages.map(\.sequence), id: \.self) { sequence in
-                    VStack(spacing: 20) {
-                        if let message = messages.first(where: { $0.sequence == sequence }) {
-                            if sequence % 4 == 1 { Text("话题 \(sequence)").font(.caption) }
-                            MessageView(message: message, model: model, maximumWidth: 507, showDetails: {})
-                        }
-                    }.conversationMessageTarget(sequence)
-                        .onGeometryChange(for: CGRect.self) { geometry in
-                            geometry.frame(in: .named("navigation-test-viewport"))
-                        } action: { frame in driver.frames[sequence] = frame }
+        VStack(spacing: 0) {
+            ConversationScrollView(position: $driver.position, messages: messages, lastSequence: messages.last?.sequence,
+                                   ready: true, sending: false, navigationHeight: 560, savePosition: { driver.viewport = $0 }) {
+                LazyVStack(alignment: .leading, spacing: 32) {
+                    ForEach(messages.map(\.sequence), id: \.self) { sequence in
+                        VStack(spacing: 20) {
+                            if let message = messages.first(where: { $0.sequence == sequence }) {
+                                if sequence % 4 == 1 { Text("话题 \(sequence)").font(.caption) }
+                                MessageView(message: message, model: model, maximumWidth: 507, showDetails: {})
+                            }
+                        }.conversationMessageTarget(sequence)
+                            .onGeometryChange(for: CGRect.self) { geometry in
+                                geometry.frame(in: .named("navigation-test-viewport"))
+                            } action: { frame in driver.frames[sequence] = frame }
+                    }
                 }
-            }.scrollTargetLayout().frame(maxWidth: 724, alignment: .leading)
+                .scrollTargetLayout().frame(maxWidth: 724, alignment: .leading)
                 .padding(.horizontal, 32).padding(.vertical, 24).frame(maxWidth: .infinity)
-        }.frame(width: 900, height: 600).coordinateSpace(name: "navigation-test-viewport")
+            }
+            if composerHeight > 0 {
+                RoundedRectangle(cornerRadius: 18).fill(TandemStyle.canvas).frame(height: composerHeight)
+                    .padding(.horizontal, 28)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("navigation-test-viewport")) }
+                        action: { driver.composerFrame = $0 }
+            }
+        }
+        .frame(width: 900, height: 600).coordinateSpace(name: "navigation-test-viewport")
     }
 }

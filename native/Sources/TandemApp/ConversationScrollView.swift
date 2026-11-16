@@ -51,10 +51,9 @@ struct ConversationScrollView<Content: View>: View {
                 observations.send(next)
             }
             .onChange(of: position.viewID(type: Int.self), initial: true) { _, sequence in
-                // Only an externally driven jump (launch restore) starts a new alignment. While one
-                // is active, corrections themselves can change the top-visible row; re-arming for
-                // those changes would loop forever.
-                guard let sequence, alignment.sequence == nil else { return }
+                // Point corrections also update the visible ID; only an explicit ID position starts a new target.
+                guard let sequence, !position.isPositionedByUser, position.point == nil, position.edge == nil,
+                      alignment.sequence != sequence else { return }
                 beginAlignment(sequence)
             }
             .onChange(of: position.edge) { _, edge in
