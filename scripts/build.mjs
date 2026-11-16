@@ -1,74 +1,136 @@
-import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { execFileSync } from "node:child_process";
+import {
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { resolve } from "node:path";
+import { packager } from "@electron/packager";
+import { compile } from "./compile.mjs";
 
-if (process.platform !== 'darwin' || process.arch !== 'arm64' || process.version !== 'v24.22.2') {
-  throw new Error('Requires Apple Silicon macOS and Node 24.22.2');
-}
-execFileSync('pnpm', ['exec', 'tsc'], { stdio: 'inherit' });
-execFileSync('swift', ['build', '--package-path', 'native', '--arch', 'arm64'], { stdio: 'inherit' });
-const bin = execFileSync('swift', ['build', '--package-path', 'native', '--arch', 'arm64', '--show-bin-path'], { encoding: 'utf8' }).trim();
-const contents = resolve('dist/Tandem.app/Contents');
-mkdirSync(`${contents}/MacOS`, { recursive: true });
-mkdirSync(`${contents}/Resources/runtime`, { recursive: true });
-const iconset = resolve('dist/AppIcon.iconset');
+compile();
+const stage = resolve("dist/package");
+rmSync(stage, { recursive: true, force: true });
+mkdirSync(stage, { recursive: true });
+for (const path of ["desktop", "shared", "runtime", "renderer"])
+  cpSync(`dist/app/${path}`, `${stage}/${path}`, { recursive: true });
+cpSync(process.execPath, `${stage}/node`);
+for (const file of [
+  "package.json",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
+  ".npmrc",
+])
+  cpSync(file, `${stage}/${file}`);
+execFileSync(
+  "pnpm",
+  [
+    "install",
+    "--prod",
+    "--offline",
+    "--frozen-lockfile",
+    "--ignore-scripts",
+    "--ignore-workspace",
+  ],
+  { cwd: stage, stdio: "inherit", env: { ...process.env, CI: "true" } },
+);
+const manifest = JSON.parse(readFileSync(`${stage}/package.json`, "utf8"));
+writeFileSync(
+  `${stage}/package.json`,
+  JSON.stringify({
+    name: "tandem",
+    version: "0.2.0",
+    type: "module",
+    main: "desktop/main.js",
+    dependencies: manifest.dependencies,
+  }),
+);
+const iconset = resolve("dist/AppIcon.iconset");
 mkdirSync(iconset, { recursive: true });
-for (const size of [16, 32, 128, 256, 512]) {
-  for (const scale of [1, 2]) {
-    execFileSync('sips', ['-z', String(size * scale), String(size * scale), 'native/Resources/AppIcon.png',
-      '--out', `${iconset}/icon_${size}x${size}${scale === 2 ? '@2x' : ''}.png`]);
-  }
-}
-execFileSync('iconutil', ['-c', 'icns', iconset, '-o', `${contents}/Resources/AppIcon.icns`]);
-cpSync(`${bin}/Tandem`, `${contents}/MacOS/Tandem`);
-cpSync(process.execPath, `${contents}/Resources/node`);
-cpSync('dist/runtime', `${contents}/Resources/runtime`, { recursive: true });
-// Install the locked production graph offline, then preserve pnpm's relative links inside the app.
-const dependencies = resolve('dist/runtime-dependencies');
-mkdirSync(dependencies, { recursive: true });
-for (const file of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']) cpSync(file, `${dependencies}/${file}`);
-execFileSync('pnpm', ['install', '--prod', '--offline', '--frozen-lockfile', '--ignore-scripts', '--ignore-workspace'], {
-  cwd: dependencies, stdio: 'inherit', env: { ...process.env, CI: 'true' },
-});
-rmSync(`${contents}/Resources/node_modules`, { recursive: true, force: true });
-cpSync(`${dependencies}/node_modules`, `${contents}/Resources/node_modules`, { recursive: true, verbatimSymlinks: true });
-for (const resource of readdirSync(bin, { withFileTypes: true }).filter(entry => entry.isDirectory() && entry.name.endsWith('.bundle'))) {
-  cpSync(`${bin}/${resource.name}`, `${contents}/Resources/${resource.name}`, { recursive: true });
-}
-let notices = readFileSync('native/Resources/ThirdPartyNotices.txt', 'utf8');
-for (const entry of readdirSync(`${dependencies}/node_modules/.pnpm`, { withFileTypes: true }).filter(e => e.isDirectory() && e.name !== 'node_modules')) {
-  const root = `${dependencies}/node_modules/.pnpm/${entry.name}/node_modules`;
-  for (const name of readdirSync(root, { withFileTypes: true })) {
-    const packages = name.name.startsWith('@') && name.isDirectory()
-      ? readdirSync(`${root}/${name.name}`, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => `${root}/${name.name}/${e.name}`)
-      : name.isDirectory() ? [`${root}/${name.name}`] : [];
+for (const size of [16, 32, 128, 256, 512])
+  for (const scale of [1, 2])
+    execFileSync(
+      "sips",
+      [
+        "-z",
+        String(size * scale),
+        String(size * scale),
+        "resources/AppIcon.png",
+        "--out",
+        `${iconset}/icon_${size}x${size}${scale === 2 ? "@2x" : ""}.png`,
+      ],
+      { stdio: "ignore" },
+    );
+execFileSync("iconutil", [
+  "-c",
+  "icns",
+  iconset,
+  "-o",
+  resolve("dist/AppIcon.icns"),
+]);
+let notices =
+  "Tandem third-party notices\nElectron and Chromium licenses accompany the application in Contents/Resources.\n";
+const dependencyRoot = `${stage}/node_modules/.pnpm`;
+for (const entry of readdirSync(dependencyRoot, { withFileTypes: true }).filter(
+  (item) => item.isDirectory() && item.name !== "node_modules",
+)) {
+  const root = `${dependencyRoot}/${entry.name}/node_modules`;
+  for (const item of readdirSync(root, { withFileTypes: true })) {
+    const packages =
+      item.isDirectory() && item.name.startsWith("@")
+        ? readdirSync(`${root}/${item.name}`, { withFileTypes: true })
+            .filter((item) => item.isDirectory())
+            .map((child) => `${root}/${item.name}/${child.name}`)
+        : item.isDirectory()
+          ? [`${root}/${item.name}`]
+          : [];
     for (const path of packages) {
-      const manifest = JSON.parse(readFileSync(`${path}/package.json`, 'utf8'));
-      notices += `\n\n${manifest.name} ${manifest.version} (${manifest.license ?? 'see package'})\n${'='.repeat(60)}\n`;
-      for (const file of readdirSync(path).filter(file => /^(licen[cs]e|copying|notice)(\.|$)/i.test(file))) {
-        notices += readFileSync(`${path}/${file}`, 'utf8') + '\n';
-      }
+      const pkg = JSON.parse(readFileSync(`${path}/package.json`, "utf8"));
+      notices += `\n${pkg.name} ${pkg.version} (${pkg.license ?? "see package"})\n`;
+      for (const file of readdirSync(path).filter((name) =>
+        /^(licen[cs]e|copying|notice)(\.|$)/i.test(name),
+      ))
+        notices += readFileSync(`${path}/${file}`, "utf8") + "\n";
     }
   }
 }
-writeFileSync(`${contents}/Resources/ThirdPartyNotices.txt`, notices);
-writeFileSync(`${contents}/Resources/package.json`, '{"type":"module"}\n');
-writeFileSync(`${contents}/Info.plist`, `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>Tandem</string>
-<key>CFBundleIdentifier</key><string>dev.tandem.personal-agent</string>
-<key>CFBundleName</key><string>Tandem</string>
-<key>CFBundleIconFile</key><string>AppIcon.icns</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>16</string>
-<key>LSMinimumSystemVersion</key><string>15.0</string>
-<key>NSHighResolutionCapable</key><true/>
-</dict></plist>\n`);
-// In-place rebuilds must invalidate Finder's cached bundle metadata and icon.
-const app = resolve('dist/Tandem.app');
-const now = new Date();
-utimesSync(app, now, now);
-execFileSync('/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister', ['-f', app]);
-console.log(`Built ${resolve('dist/Tandem.app')}`);
+writeFileSync(`${stage}/ThirdPartyNotices.txt`, notices);
+const [bundle] = await packager({
+  dir: stage,
+  out: resolve("dist/electron"),
+  name: "Tandem",
+  platform: "darwin",
+  arch: "arm64",
+  electronVersion: JSON.parse(
+    readFileSync("node_modules/electron/package.json", "utf8"),
+  ).version,
+  appBundleId: "dev.tandem.personal-agent",
+  appVersion: "0.2.0",
+  buildVersion: "17",
+  icon: resolve("dist/AppIcon.icns"),
+  asar: false,
+  prune: false,
+  derefSymlinks: false,
+  overwrite: true,
+  extendInfo: { LSMinimumSystemVersion: "15.0" },
+});
+rmSync("dist/Tandem.app", { recursive: true, force: true });
+const app = `${bundle}/Tandem.app`;
+const modules = `${app}/Contents/Resources/app/node_modules`;
+// Packager absolutizes pnpm links; restore the locked relative graph before shipping.
+rmSync(modules, { recursive: true, force: true });
+cpSync(`${stage}/node_modules`, modules, {
+  recursive: true,
+  verbatimSymlinks: true,
+});
+for (const file of ["LICENSE", "LICENSES.chromium.html"])
+  cpSync(`${bundle}/${file}`, `${app}/Contents/Resources/${file}`);
+cpSync(app, "dist/Tandem.app", { recursive: true, verbatimSymlinks: true });
+execFileSync(
+  "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
+  ["-f", resolve("dist/Tandem.app")],
+);
+console.log(`Built ${resolve("dist/Tandem.app")}`);

@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "rootDir": ".", "outDir": "dist/app" },
+  "include": [
+    "desktop/**/*.ts",
+    "desktop/**/*.cts",
+    "shared/**/*.ts",
+    "runtime/src/protocol.ts"
+  ],
+  "exclude": ["desktop/test"]
+}

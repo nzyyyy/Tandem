@@ -1,0 +1,372 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { Tooltip } from "radix-ui";
+import { App } from "../App.tsx";
+import { Settings, modelAdditionError, providerName } from "../settings.tsx";
+import { Markdown } from "../components/markdown.tsx";
+import { AssistantStore, StoreContext } from "../store.tsx";
+import type {
+  AssistantSnapshot,
+  AppConfiguration,
+} from "../../shared/model.ts";
+import type { DesktopBridge, Payload } from "../../shared/bridge.ts";
+
+const snapshot = (): AssistantSnapshot => ({
+  generation: "generation-a",
+  activity: { runs: [], tasks: [], grants: [], approvals: [] },
+  projects: [],
+  pendingInteractions: [],
+  focus: {
+    activeSessionId: null,
+    activeProjectId: null,
+    contextMode: "automatic",
+    interruptedSessionId: null,
+    version: 1,
+  },
+  models: [],
+  defaultModel: null,
+  configError: null,
+  sessions: [],
+  messages: [],
+  changedMessages: [],
+  cursor: 0,
+  hasMore: false,
+});
+const config = (): AppConfiguration => ({
+  schemaVersion: 1,
+  modelConnections: [],
+  defaultModel: null,
+});
+function setup(configuration = config()) {
+  const store = new AssistantStore({
+    surfaceId: "window-a",
+    preferences: { appearance: "auto", sidebarWidth: 238, positions: {} },
+  });
+  store.set({ snapshot: snapshot() });
+  const request = vi.fn<DesktopBridge["request"]>(
+    async (method: string, _payload?: Payload) => ({
+      ok: true as const,
+      data:
+        method === "config.get"
+          ? { config: configuration, revision: "revision-a" }
+          : method === "state.get"
+            ? snapshot()
+            : {},
+    }),
+  );
+  window.tandem = {
+    request,
+    ready: vi.fn(async () => {}),
+    onPreferences: () => () => {},
+    status: vi.fn(async () => store.state.status),
+    copy: vi.fn(async () => {}),
+    openExternal: vi.fn(async () => {}),
+    preferences: vi.fn(async () => {}),
+    position: vi.fn(async () => {}),
+  } as unknown as DesktopBridge;
+  const wrap = (element: React.ReactNode) =>
+    render(
+      <StoreContext.Provider value={store}>
+        <Tooltip.Provider>{element}</Tooltip.Provider>
+      </StoreContext.Provider>,
+    );
+  return { store, request, wrap };
+}
+beforeEach(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    },
+  );
+  HTMLElement.prototype.scrollIntoView = vi.fn();
+  HTMLElement.prototype.hasPointerCapture = () => false;
+  HTMLElement.prototype.setPointerCapture = vi.fn();
+  HTMLElement.prototype.releasePointerCapture = vi.fn();
+});
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+describe("preserved interactions", () => {
+  it("keeps an unsaved project until navigation is explicitly discarded", async () => {
+    const { store, wrap } = setup();
+    vi.spyOn(store, "start").mockResolvedValue();
+    wrap(<App />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "项目" }));
+    await user.type(screen.getByLabelText("项目名称"), "未保存的项目");
+    await user.click(screen.getByRole("button", { name: "模型设置" }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "继续编辑" }));
+    expect((screen.getByLabelText("项目名称") as HTMLInputElement).value).toBe(
+      "未保存的项目",
+    );
+    await user.click(screen.getByRole("button", { name: "模型设置" }));
+    await user.click(screen.getByRole("button", { name: "放弃修改并离开" }));
+    await screen.findByRole("button", { name: "保存配置" });
+  });
+  it("confirms discarding project edits before switching projects or creating a new one", async () => {
+    const { store, request, wrap } = setup();
+    vi.spyOn(store, "start").mockResolvedValue();
+    const state = snapshot();
+    state.projects = [
+      {
+        id: "a",
+        title: "项目 A",
+        description: "说明 A",
+        status: "open",
+        version: 1,
+      },
+      {
+        id: "b",
+        title: "项目 B",
+        description: "说明 B",
+        status: "open",
+        version: 1,
+      },
+    ];
+    store.set({ snapshot: state });
+    wrap(<App />);
+    const user = userEvent.setup();
+    const title = () => screen.getByLabelText("项目名称") as HTMLInputElement;
+    const description = () =>
+      screen.getByLabelText("目标或说明") as HTMLTextAreaElement;
+
+    await user.click(screen.getByRole("button", { name: "项目" }));
+    await user.click(screen.getByRole("button", { name: "项目 A" }));
+    await user.type(title(), " 修改");
+    await user.type(description(), " 修改");
+    await user.click(screen.getByRole("button", { name: "项目 B" }));
+    await screen.findByRole("dialog", { name: "放弃当前项目的修改？" });
+    await user.click(screen.getByRole("button", { name: "继续编辑" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(title().value).toBe("项目 A 修改");
+    expect(description().value).toBe("说明 A 修改");
+
+    await user.click(screen.getByRole("button", { name: "项目 B" }));
+    await user.click(screen.getByRole("button", { name: "放弃修改并切换" }));
+    expect(title().value).toBe("项目 B");
+    expect(description().value).toBe("说明 B");
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await user.type(title(), " 修改");
+    await user.click(screen.getByRole("button", { name: "新建项目" }));
+    await screen.findByRole("dialog", { name: "放弃当前项目的修改？" });
+    await user.click(screen.getByRole("button", { name: "放弃修改并切换" }));
+    expect(title().value).toBe("");
+    expect(description().value).toBe("");
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "创建项目" })).toBeTruthy();
+    expect(request).not.toHaveBeenCalled();
+  });
+  it("adds named providers and trims model names before saving with a revision", async () => {
+    const { wrap, request } = setup();
+    wrap(<Settings onDirty={() => {}} onBusy={() => {}} />);
+    const user = userEvent.setup();
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole("button", {
+            name: "添加供应商",
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(false),
+    );
+    await user.click(screen.getByRole("button", { name: "添加供应商" }));
+    await user.type(screen.getByLabelText("供应商名称"), "我的模型");
+    await user.type(screen.getByLabelText("新模型名称"), " model-a ");
+    expect(
+      (screen.getByRole("button", { name: "保存配置" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    await user.click(screen.getByRole("button", { name: "添加" }));
+    request.mockImplementation(async (method, payload) => ({
+      ok: true,
+      data:
+        method === "config.save"
+          ? { config: payload!.config, revision: "revision-b" }
+          : snapshot(),
+    }));
+    await user.click(screen.getByRole("button", { name: "保存配置" }));
+    await screen.findByText("已保存。");
+    const payload = request.mock.calls.find(
+      ([method]) => method === "config.save",
+    )![1]!;
+    expect(payload.expectedRevision).toBe("revision-a");
+    expect(
+      (payload.config as AppConfiguration).modelConnections[0]!.modelNames,
+    ).toEqual(["model-a"]);
+    expect((payload.config as AppConfiguration).modelConnections[0]!.name).toBe(
+      "我的模型",
+    );
+  });
+  it("removing the default model clears only its matching default selection", async () => {
+    const configuration: AppConfiguration = {
+      schemaVersion: 1,
+      modelConnections: [
+        {
+          id: "provider",
+          protocol: "openai",
+          apiType: "responses",
+          url: "https://example.com/v1",
+          key: "",
+          modelNames: ["a", "b"],
+        },
+      ],
+      defaultModel: { connectionId: "provider", modelName: "a" },
+    };
+    const { wrap, request } = setup(configuration);
+    wrap(<Settings onDirty={() => {}} onBusy={() => {}} />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "移除模型 a" }));
+    request.mockImplementation(async (method, payload) => ({
+      ok: true,
+      data:
+        method === "config.save"
+          ? { config: payload!.config, revision: "b" }
+          : snapshot(),
+    }));
+    await user.click(screen.getByRole("button", { name: "保存配置" }));
+    await screen.findByText("已保存。");
+    const saved = request.mock.calls.find(
+      ([method]) => method === "config.save",
+    )![1]!.config as AppConfiguration;
+    expect(saved.defaultModel).toBeNull();
+    expect(saved.modelConnections[0]!.id).toBe("provider");
+    expect(saved.modelConnections[0]!.modelNames).toEqual(["b"]);
+  });
+  it("blocks destructive project deletion behind a complete preview", async () => {
+    const { store, request, wrap } = setup();
+    vi.spyOn(store, "start").mockResolvedValue();
+    const state = snapshot();
+    state.projects = [
+      {
+        id: "project",
+        title: "测试项目",
+        description: "",
+        status: "open",
+        version: 1,
+      },
+    ];
+    store.set({ snapshot: state });
+    request.mockImplementation(async (method) => ({
+      ok: true,
+      data:
+        method === "project.deletePreview"
+          ? {
+              token: "preview",
+              title: "测试项目",
+              interactions: [{ id: "i" }],
+              messages: [{ id: "m" }],
+              runs: [],
+              tasks: [],
+              memories: [],
+              sharedSnapshots: [],
+              derivedMessages: [],
+            }
+          : state,
+    }));
+    wrap(<App />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "项目" }));
+    await user.click(screen.getByRole("button", { name: "测试项目" }));
+    expect(screen.queryByRole("button", { name: "确认永久删除" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "预览永久删除…" }));
+    await screen.findByRole("button", { name: "确认永久删除" });
+    expect(
+      request.mock.calls.some(([method]) => method === "project.delete"),
+    ).toBe(false);
+  });
+  it("does not send while composing Chinese input", async () => {
+    const { store, wrap } = setup();
+    vi.spyOn(store, "start").mockResolvedValue();
+    const send = vi.spyOn(store, "send").mockResolvedValue();
+    wrap(<App />);
+    const input = screen.getByLabelText("消息内容");
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(send).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter", metaKey: true });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+});
+describe("content and delivery boundaries", () => {
+  it("renders Markdown tables and code while suppressing HTML, image loads and unsafe links", async () => {
+    setup();
+    render(
+      <Markdown
+        source={
+          "# 标题\n\n| 名称 | 值 |\n| --- | --- |\n| A | B |\n\n```ts\nconst value = 1;\n```\n\n![图片说明](https://example.com/tracker.png)\n\n[危险](javascript:alert(1)) [文档](https://example.com/docs)\n\n<script>alert(1)</script>"
+        }
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "标题" })).toBeTruthy();
+    expect(screen.getByRole("table")).toBeTruthy();
+    expect(document.querySelector("img")).toBeNull();
+    expect(document.querySelector("script")).toBeNull();
+    expect(screen.queryByRole("link", { name: "危险" })).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "复制代码" }));
+    expect(window.tandem.copy).toHaveBeenCalledWith("const value = 1;");
+    await user.click(screen.getByRole("link", { name: "文档" }));
+    expect(window.tandem.openExternal).toHaveBeenCalledWith(
+      "https://example.com/docs",
+    );
+  });
+  it("reuses an idempotency key after a lost send acknowledgement and preserves edits made in flight", async () => {
+    const { store, request } = setup();
+    store.set({ draft: "hello" });
+    let fail = true;
+    request.mockImplementation(async (method) => {
+      if (method === "message.send") {
+        if (fail) {
+          fail = false;
+          return { ok: false, error: "RUNTIME_DISCONNECTED" };
+        }
+        store.set({ draft: "new draft" });
+      }
+      return { ok: true, data: snapshot() };
+    });
+    await store.send();
+    expect(store.state.draft).toBe("hello");
+    await store.send();
+    const sends = request.mock.calls.filter(
+      ([method]) => method === "message.send",
+    );
+    expect(sends[0]![1]!.idempotencyKey).toBe(sends[1]![1]!.idempotencyKey);
+    expect(store.state.draft).toBe("new draft");
+    expect(store.state.sending).toBe(false);
+  });
+  it("preserves legacy provider identity and validates model name bounds", () => {
+    expect(
+      providerName({
+        id: "a",
+        protocol: "openai",
+        apiType: "responses",
+        url: "https://example.com/v1",
+        key: "",
+        modelNames: [],
+      }),
+    ).toBe("example.com");
+    expect(modelAdditionError(" model-a ", [])).toBeNull();
+    for (const name of ["", "bad\nname", "x".repeat(257), "😀".repeat(129)])
+      expect(modelAdditionError(name, [])).toBeTruthy();
+    expect(modelAdditionError("a", ["a"])).toBeTruthy();
+    expect(
+      modelAdditionError(
+        "new",
+        Array.from({ length: 20 }, (_, i) => String(i)),
+      ),
+    ).toBeTruthy();
+  });
+});

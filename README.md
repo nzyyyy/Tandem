@@ -1,11 +1,11 @@
 # Tandem
 
-Personal Agent 的 Core MVP 开发版本：原生 SwiftUI 聊天、多模型接入、项目与上下文管理、持久任务、原生只读文件工具、审批与执行预算、可追溯的事实与决策记忆，以及手动备份与恢复。SwiftUI App 管理 Node Runtime，通过受保护的 Unix Domain Socket 通信。产品基线见 [产品与技术设计规范](docs/Personal_Agent_产品与技术设计规范_v1.0.md)。
+Personal Agent 的 Core MVP 开发版本：Electron + React + TypeScript 桌面聊天、多模型接入、项目与上下文管理、持久任务、原生只读文件工具、审批与执行预算、可追溯的事实与决策记忆，以及手动备份与恢复。Electron 主进程管理独立 Node Runtime，通过受保护的 Unix Domain Socket 通信。产品基线见 [产品与技术设计规范](docs/Personal_Agent_产品与技术设计规范_v1.0.md)。
 
 ## 开发环境
 
 - Apple Silicon Mac；最低部署目标 macOS 15.0。本机验证环境为 macOS 27.2，未在 macOS 15 实机运行。
-- Xcode 27.2 / Swift 6.4.2（SPM 使用 Swift 5 语言兼容模式）。
+- Electron 45.3.2、React 19.3.1、TypeScript 5.9.3、Vite、Tailwind CSS 4 与 Radix UI。日常构建不再依赖 Swift / Xcode。
 - Node **24.22.2**，pnpm **11.22.0**；TypeScript 和类型依赖已锁定。
 
 ```sh
@@ -16,7 +16,11 @@ pnpm run test
 pnpm run dev
 ```
 
-`build` 生成 `dist/Tandem.app`，内含当前已验证的 arm64 Node、编译后的 JavaScript 和锁定的生产依赖。构建从 pnpm 本机缓存离线安装生产依赖，首次构建前须完成上述 `pnpm install`；运行应用包不依赖 pnpm、开发目录、全局 Node 或 pi。`dev` 构建后打开应用；也可直接打开该 `.app`。这是未做正式签名、公证的本地开发包。
+`build` 生成 `dist/Tandem.app`，内含 Electron、固定版本的 arm64 Node、编译后的宿主/业务代码、React 页面和锁定的生产依赖。首次安装/构建需要下载 Electron 运行时；生产依赖从 pnpm 本机缓存离线安装。应用包运行不依赖 pnpm、开发目录、全局 Node 或 Xcode。这是未做正式签名、公证的本地开发包。
+
+`dev` 编译宿主和业务运行时，再启动 Vite 与 Electron，React 页面支持热更新；宿主代码改动后重启开发命令。也可直接打开构建后的 `.app`。`desktop/` 管理窗口、系统对话框、受限 preload 桥和运行时守护，`renderer/` 管理页面，`shared/` 定义桥接与页面类型，`runtime/` 保留原有业务实现。
+
+界面以迁移前 SwiftUI 的实际灰阶主题、系统字体、控件密度、布局与交互为基准，Radix 控件采用自定义样式。保留浅色/深色/跟随系统、可拖动侧栏、原生标题栏按钮、系统菜单和多窗口。迁移与验证边界见 [Electron 迁移记录](docs/Electron_迁移与验收.md)。
 
 执行底座使用 pi SDK **1.5.2**，由 SDK 负责模型与工具循环，复用现有三种模型协议的网络适配。Tandem SQLite 仍管理话题、记忆、任务、审批、预算和检查点；每个活动 Run 只建立内存中的 pi 会话，不新增数据迁移。当前不自动加载 `~/.pi`、项目配置、skills、MCP 或社区扩展，也不启用默认 shell/文件写入工具；MCP/skills 管理后续接入。迁移边界与验收见 [pi SDK 迁移记录](docs/Pi_SDK_迁移与验收.md)。
 
@@ -42,7 +46,7 @@ pnpm run dev
 14. “模型设置”底部提供“备份与恢复”：保存或放弃配置编辑后，可导出明文 JSON 备份，或选择备份查看时间和消息、项目、记忆、任务及附件数量。导出时配置中的 Key 清空，不复制外部授权目录；请在应用数据目录以外选择新文件名，已有文件不覆盖。当前上限为 128 MiB 数据、4096 个文件，完整包最多 192 MiB。
 15. 点击“确认替换并恢复”后整库替换，不合并历史；恢复前在数据目录旁保留完整本机保护副本，成功后显示其位置。当前未解除的遗忘标记继续生效。所有窗口重新加载恢复后的数据，需重新填写 Key、选择目录并手动继续任务；预算用量保留，旧审批不可复用。保护副本含原本机 Key，仅供本机故障保护，不应作为脱敏备份分享。
 
-AI 回答与 Activity 报告使用 Textual 0.5.0 原生 Markdown 渲染，支持标题、嵌套列表、引用、表格、链接及带复制操作的代码高亮。流式更新沿用同一显示组件；消息菜单可复制完整 Markdown 原文。图片只保留说明文字，不自动读取远程或本地资源；链接仅在主动点击时打开 HTTP/HTTPS 页面。
+AI 回答与 Activity 报告使用 react-markdown、GFM 和代码高亮渲染，支持标题、嵌套列表、引用、表格、链接及带复制操作的代码高亮。流式更新沿用同一显示组件；消息菜单可复制完整 Markdown 原文。图片只保留说明文字，不自动读取远程或本地资源；链接仅在主动点击时打开 HTTP/HTTPS 页面。
 
 对话页中，用户消息以右侧浅色气泡显示，长消息最多占内容区约 70%，气泡内文字左对齐；AI 回答靠左。话题和项目变化处显示轻量分隔提示，详情不逐条常驻展开。
 
@@ -60,11 +64,13 @@ AI 回答与 Activity 报告使用 Textual 0.5.0 原生 Markdown 渲染，支持
 
 ## 检查
 
-`pnpm run test` 包含配置冲突与权限、三种模型 API 的普通/流式契约、安全边界、队列/重试/历史恢复、SQLite 与 Swift 帧检查，以及真实 AssistantModel → Swift RPC → Node → 本机模拟模型端点的无窗口联调。联调从运行环境尚未启动时开始轮询，检查首份数据就绪时间、初始错误恢复和等待期间主线程任务持续调度。测试使用隔离目录，不读取真实 Key，不调用付费模型。需要允许本机 Unix Socket 和 HTTP listen；受限执行环境可能需要常规本地执行权限。
+`pnpm run typecheck` 检查运行时、Electron 宿主、桥接及 React 页面；`pnpm run test:unit` 运行运行时/宿主测试和 React 交互测试，覆盖配置冲突、权限、模型协议、安全目录读取、消息幂等、中文输入、删除预览、未保存编辑及 Markdown 安全策略。
 
-`pnpm run test:lifecycle` 构建后启动真实应用包，用应用内自检关闭最后一个窗口、验证持续心跳、重开窗口并完整退出，检查内嵌 Node 已结束。需可用的 macOS 图形登录会话；该检查会短暂显示窗口。
+`pnpm run test` 还运行真实 Electron → 受保护 Unix Socket → 独立 Node → 本机模拟模型的无窗口联调，检查三种 API、流式响应、项目路由与纠正、持续任务与目录工具、长期记忆、备份恢复与遗忘保护、不同窗口的数据代次、历史分页、重连、崩溃恢复及退出清理。测试使用隔离目录，不读取真实 Key，不调用付费模型；需要允许本机 Unix Socket 和 HTTP listen。
 
-`pnpm run test:bundle` 在构建后运行：将完整应用包复制到临时目录，检查依赖链接不指向包外，再以最小 PATH 运行无窗口三协议、原生工具、记忆及备份恢复联调，包括遗忘保护、目录授权清除和两个窗口的历史重载，验证内嵌 Node 和 pi SDK 能脱离开发目录运行。生产依赖的许可随包汇总到 `Contents/Resources/ThirdPartyNotices.txt`。
+`pnpm run test:bundle` 在构建后运行：复制完整应用包到临时目录，检查依赖链接不指向包外，并在最小 PATH 下执行上述联调。Electron/Chromium 许可保留于 `Contents/Resources`，业务与页面依赖许可汇总于 `Contents/Resources/app/ThirdPartyNotices.txt`。
+
+`pnpm run test:lifecycle` 构建并运行真实应用内自检，检查 React/preload 完成初始化、关闭最后一个窗口后后台任务仍完成、重开窗口、完整退出及 Node 清理。需要 macOS 图形登录会话，会短暂显示测试窗口。界面交互测试与应用内自检不等同于人工视觉验收；当前未使用浏览器或电脑控制工具进行检查。
 
 日志输出到标准错误；App 窗口保留最近 100 条 Host 日志。需保存日志时可直接运行：
 
@@ -72,4 +78,4 @@ AI 回答与 Activity 报告使用 Textual 0.5.0 原生 Markdown 渲染，支持
 dist/Tandem.app/Contents/MacOS/Tandem 2> /tmp/tandem-m0.log
 ```
 
-M1 数据库首次启动先在 `~/.tandem/migrations/` 保存权限 0600、含完整历史的一致性保护副本，再事务迁移到 M2，保留原消息和顺序。保护副本不随当前数据库的删除操作自动清理；SQLite WAL、已有副本及云端留存不承诺物理擦除。M1 无法直接打开 M2 数据库，回滚须完整退出后从保护副本恢复；开发验证请使用隔离目录。M3 首次启动同样保存 Schema 2 保护副本后迁移至 Schema 3。目录授权由 Swift 持有，可撤销；完整退出后不自动恢复授权，重新选择同一资源后才能继续相关检查点。M4 首次启动保存 Schema 3 保护副本后迁移至 Schema 4；既有历史不自动批量提取，可从用户消息手动保存。自动提取及本地 FTS 的句式与召回边界见 M4 验收文档。手动备份恢复已在 Core 阶段实现；恢复包中的旧 Schema 只在暂存副本迁移，恢复切换中断时下次启动先回滚未提交切换。实现与验证记录：[M0](docs/M0_开发与验收.md) / [M1](docs/M1_开发与验收.md) / [M2](docs/M2_开发与验收.md) / [M3](docs/M3_开发与验收.md) / [M4](docs/M4_开发与验收.md) / [Core](docs/Core_开发与验收.md)。
+M1 数据库首次启动先在 `~/.tandem/migrations/` 保存权限 0600、含完整历史的一致性保护副本，再事务迁移到 M2，保留原消息和顺序。保护副本不随当前数据库的删除操作自动清理；SQLite WAL、已有副本及云端留存不承诺物理擦除。M1 无法直接打开 M2 数据库，回滚须完整退出后从保护副本恢复；开发验证请使用隔离目录。M3 首次启动同样保存 Schema 2 保护副本后迁移至 Schema 3。目录授权由 Electron 宿主持有，可撤销；完整退出后不自动恢复授权，重新选择同一资源后才能继续相关检查点。M4 首次启动保存 Schema 3 保护副本后迁移至 Schema 4；既有历史不自动批量提取，可从用户消息手动保存。自动提取及本地 FTS 的句式与召回边界见 M4 验收文档。手动备份恢复已在 Core 阶段实现；恢复包中的旧 Schema 只在暂存副本迁移，恢复切换中断时下次启动先回滚未提交切换。实现与验证记录：[M0](docs/M0_开发与验收.md) / [M1](docs/M1_开发与验收.md) / [M2](docs/M2_开发与验收.md) / [M3](docs/M3_开发与验收.md) / [M4](docs/M4_开发与验收.md) / [Core](docs/Core_开发与验收.md)。
