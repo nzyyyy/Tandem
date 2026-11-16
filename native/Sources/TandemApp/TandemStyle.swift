@@ -22,6 +22,7 @@ enum TandemStyle {
     static let onAccent = color(0xFFFFFF, 0x1F1F1F)
     static let selection = color(0xE6E6E6, 0x454545)
     static let border = color(0xE5E5E5, 0x3A3A3A)
+    static let inputBorder = color(0xD5D5D5, 0x4A4A4A)
 }
 
 // 应用外观：auto 跟随系统，其余强制浅色/深色。

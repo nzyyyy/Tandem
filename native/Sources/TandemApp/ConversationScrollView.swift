@@ -22,6 +22,7 @@ struct ConversationScrollView<Content: View>: View {
     var sending: Bool
     var navigationHeight: CGFloat
     var savePosition: (ConversationViewport) -> Void
+    var onScrollSettled: () -> Void = {}
     @ViewBuilder var content: Content
     @State private var viewport = ConversationViewport()
     @State private var alignment = ConversationScrollAlignment()
@@ -50,17 +51,11 @@ struct ConversationScrollView<Content: View>: View {
                 observations.send(next)
             }
             .onChange(of: position.viewID(type: Int.self), initial: true) { _, sequence in
-                guard let sequence else { return }
-                if alignment.sequence != sequence { alignment.request(sequence) }
-                // Let the ID jump and the lazy rows settle before correcting with a possibly stale layout.
-                jumpSettling = true
-                jumpRetry?.cancel()
-                jumpRetry = Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(120))
-                    guard !Task.isCancelled else { return }
-                    jumpSettling = false
-                    correctAlignment(observations.value)
-                }
+                // Only an externally driven jump (launch restore) starts a new alignment. While one
+                // is active, corrections themselves can change the top-visible row; re-arming for
+                // those changes would loop forever.
+                guard let sequence, alignment.sequence == nil else { return }
+                beginAlignment(sequence)
             }
             .onChange(of: position.edge) { _, edge in
                 if edge != nil { alignment.cancel() }
@@ -98,14 +93,31 @@ struct ConversationScrollView<Content: View>: View {
                 correctAlignment(next)
                 if !wasAligned, alignment.isAligned { savePosition(next.viewport) }
             }
+            .onReceive(observations.removeDuplicates().debounce(for: .milliseconds(300), scheduler: RunLoop.main).receive(on: RunLoop.main)) { _ in
+                // Lazy-row measurements and alignment corrections have stopped moving the list.
+                onScrollSettled()
+            }
             .overlay(alignment: .leading) {
                 ConversationNavigation(messages: messages, visibleSequence: viewport.visibleSequence,
                                        maximumHeight: navigationHeight, isAtBottom: viewport.isAtBottom) { sequence in
                     // A single, nonanimated target replaces earlier clicks instead of stacking scroll animations.
-                    alignment.request(sequence)
+                    beginAlignment(sequence)
                     position.scrollTo(id: sequence, anchor: .top)
                 }.padding(.leading, 4)
             }
+    }
+
+    // Let the ID jump and the lazy rows settle before correcting with a possibly stale layout.
+    private func beginAlignment(_ sequence: Int) {
+        alignment.request(sequence)
+        jumpSettling = true
+        jumpRetry?.cancel()
+        jumpRetry = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            jumpSettling = false
+            correctAlignment(observations.value)
+        }
     }
 
     private func correctAlignment(_ observation: ConversationScrollObservation) {

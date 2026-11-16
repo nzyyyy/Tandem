@@ -115,6 +115,7 @@ struct TandemApp: App {
     var body: some Scene {
         WindowGroup("Tandem", id: "main") { AssistantView(runtime: delegate.runtime) }
             .defaultSize(width: 1280, height: 820)
+            .windowStyle(.hiddenTitleBar)
     }
 }
 

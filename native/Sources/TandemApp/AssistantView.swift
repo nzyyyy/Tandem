@@ -29,7 +29,11 @@ struct AssistantView: View {
     @State private var filterProject = "*"
     @State private var detailMessageId: String?
     @AppStorage(TandemAppearance.key) private var appearance = "auto"
+    @AppStorage("tandem.sidebarWidth") private var sidebarWidth = 238.0
     @SwiftUI.FocusState private var composerFocused: Bool
+    @GestureState private var sidebarDragOrigin: CGFloat?
+    @State private var hoveringDivider = false
+    @State private var scrollSettled = false
 
     init(runtime: RuntimeSupervisor) {
         _model = StateObject(wrappedValue: AssistantModel(runtime: runtime))
@@ -37,65 +41,12 @@ struct AssistantView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 10) {
-                    Image(systemName: "circle.lefthalf.filled")
-                        .foregroundStyle(TandemStyle.onAccent).padding(8)
-                        .background(TandemStyle.accent, in: RoundedRectangle(cornerRadius: 9))
-                    Text("Tandem").font(.system(size: 22, weight: .semibold))
-                }
-                .padding(.top, 20).padding(.horizontal, 20).padding(.bottom, 24)
-                VStack(spacing: 4) {
-                    SelectionRow(title: "对话", symbol: "bubble.left.and.bubble.right", selected: navigation.value == "assistant") { navigate("assistant") }
-                    SelectionRow(title: "Activity", symbol: "list.bullet.rectangle", selected: navigation.value == "activity") { navigate("activity") }
-                    SelectionRow(title: "项目", symbol: "folder", selected: navigation.value == "projects") { navigate("projects") }
-                    SelectionRow(title: "长期记忆", symbol: "brain", selected: navigation.value == "memory") { navigate("memory") }
-                    SelectionRow(title: "模型设置", symbol: "slider.horizontal.3", selected: navigation.value == "settings") { navigate("settings") }
-                }.padding(.horizontal, 12)
-                Text("最近话题").font(.caption.weight(.medium)).foregroundStyle(TandemStyle.secondary)
-                    .padding(.horizontal, 24).padding(.top, 32).padding(.bottom, 12)
-                ScrollView {
-                    LazyVStack(spacing: 4) {
-                        ForEach(model.snapshot?.sessions ?? []) { session in
-                            SelectionRow(title: session.title, symbol: session.temporary == 1 ? "bubble.left" : "text.bubble",
-                                         selected: navigation.value == "assistant" && session.id == model.snapshot?.focus.activeSessionId) {
-                                if navigation.value == "assistant" { Task { await model.focus(session.id) } }
-                                else { navigate("assistant", sessionId: session.id) }
-                            }
-                        }
-                    }.padding(.horizontal, 12)
-                }
-                VStack(alignment: .leading, spacing: 10) {
-                    Divider()
-                    appearanceSwitcher
-                    Button { showDiagnostics = true } label: {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label("运行状态", systemImage: "waveform.path").font(.system(size: 13, weight: .medium))
-                            Text("本地运行 · \(runtime.status)").font(.caption).foregroundStyle(TandemStyle.secondary)
-                        }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                }.padding(20)
-            }
-            .background(TandemStyle.surface)
-            .disabled(editorBusy)
-            .navigationSplitViewColumnWidth(min: 200, ideal: 238, max: 300)
-        } detail: {
-            ZStack {
-                // Keep the scroll view mounted so page changes preserve its exact offset.
-                conversation
-                    .opacity(navigation.value == "assistant" ? 1 : 0)
-                    .disabled(navigation.value != "assistant")
-                    .allowsHitTesting(navigation.value == "assistant")
-                    .accessibilityHidden(navigation.value != "assistant")
-                if navigation.value == "settings" { ModelSettingsView(model: model, hasUnsavedChanges: $hasUnsavedChanges, busy: $editorBusy) }
-                else if navigation.value == "projects" { ProjectView(model: model, hasUnsavedChanges: $hasUnsavedChanges, working: $editorBusy) }
-                else if navigation.value == "activity" { ActivityView(model: model) }
-                else if navigation.value == "memory" { MemoryView(model: model, working: $editorBusy) { navigate("assistant", sessionId: $0) } }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(TandemStyle.canvas)
+        HStack(spacing: 0) {
+            sidebar
+            sidebarDivider
+            detail
         }
+        .ignoresSafeArea(.container, edges: .top)
         .tint(TandemStyle.accent).foregroundStyle(TandemStyle.ink)
         .buttonStyle(TandemButtonStyle())
         .frame(minWidth: 860, minHeight: 600)
@@ -131,6 +82,97 @@ struct AssistantView: View {
         }
     }
 
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "circle.lefthalf.filled")
+                    .foregroundStyle(TandemStyle.onAccent).padding(8)
+                    .background(TandemStyle.accent, in: RoundedRectangle(cornerRadius: 9))
+                Text("Tandem").font(.system(size: 22, weight: .semibold))
+            }
+            .padding(.top, 46).padding(.horizontal, 20).padding(.bottom, 24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .gesture(WindowDragGesture())
+            VStack(spacing: 4) {
+                SelectionRow(title: "对话", symbol: "bubble.left.and.bubble.right", selected: navigation.value == "assistant") { navigate("assistant") }
+                SelectionRow(title: "Activity", symbol: "list.bullet.rectangle", selected: navigation.value == "activity") { navigate("activity") }
+                SelectionRow(title: "项目", symbol: "folder", selected: navigation.value == "projects") { navigate("projects") }
+                SelectionRow(title: "长期记忆", symbol: "brain", selected: navigation.value == "memory") { navigate("memory") }
+                SelectionRow(title: "模型设置", symbol: "slider.horizontal.3", selected: navigation.value == "settings") { navigate("settings") }
+            }.padding(.horizontal, 12)
+            Text("最近话题").font(.caption.weight(.medium)).foregroundStyle(TandemStyle.secondary)
+                .padding(.horizontal, 24).padding(.top, 32).padding(.bottom, 12)
+            ScrollView {
+                LazyVStack(spacing: 4) {
+                    ForEach(model.snapshot?.sessions ?? []) { session in
+                        SelectionRow(title: session.title, symbol: session.temporary == 1 ? "bubble.left" : "text.bubble",
+                                     selected: navigation.value == "assistant" && session.id == model.snapshot?.focus.activeSessionId) {
+                            if navigation.value == "assistant" { Task { await model.focus(session.id) } }
+                            else { navigate("assistant", sessionId: session.id) }
+                        }
+                    }
+                }.padding(.horizontal, 12)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                Divider()
+                appearanceSwitcher
+                Button { showDiagnostics = true } label: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("运行状态", systemImage: "waveform.path").font(.system(size: 13, weight: .medium))
+                        Text("本地运行 · \(runtime.status)").font(.caption).foregroundStyle(TandemStyle.secondary)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8).contentShape(Rectangle())
+                }.buttonStyle(.plain)
+            }.padding(20)
+        }
+        .background(TandemStyle.surface)
+        .frame(width: CGFloat(sidebarWidth))
+        .contentShape(Rectangle())
+        .onTapGesture { composerFocused = false }
+        .disabled(editorBusy)
+    }
+
+    private var sidebarDivider: some View {
+        Rectangle()
+            .fill(TandemStyle.surface)
+            .frame(width: 6)
+            .overlay(alignment: .trailing) { Rectangle().fill(TandemStyle.border).frame(width: 1) }
+            .contentShape(Rectangle())
+            .onHover { inside in
+                guard inside != hoveringDivider else { return }
+                hoveringDivider = inside
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                // Global coordinates: the divider moves with the drag, so a local space feeds back on itself.
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .updating($sidebarDragOrigin) { _, origin, _ in
+                        if origin == nil { origin = CGFloat(sidebarWidth) }
+                    }
+                    .onChanged { value in
+                        let base = sidebarDragOrigin ?? CGFloat(sidebarWidth)
+                        sidebarWidth = Double(min(300, max(200, base + value.translation.width)))
+                    }
+            )
+            .accessibilityLabel("调整侧栏宽度")
+    }
+
+    private var detail: some View {
+        ZStack {
+            // Keep the scroll view mounted so page changes preserve its exact offset.
+            conversation
+                .opacity(navigation.value == "assistant" ? 1 : 0)
+                .disabled(navigation.value != "assistant")
+                .allowsHitTesting(navigation.value == "assistant")
+                .accessibilityHidden(navigation.value != "assistant")
+            if navigation.value == "settings" { ModelSettingsView(model: model, hasUnsavedChanges: $hasUnsavedChanges, busy: $editorBusy).ignoresSafeArea(.container, edges: .top) }
+            else if navigation.value == "projects" { ProjectView(model: model, hasUnsavedChanges: $hasUnsavedChanges, working: $editorBusy).ignoresSafeArea(.container, edges: .top) }
+            else if navigation.value == "activity" { ActivityView(model: model).ignoresSafeArea(.container, edges: .top) }
+            else if navigation.value == "memory" { MemoryView(model: model, working: $editorBusy) { navigate("assistant", sessionId: $0) }.ignoresSafeArea(.container, edges: .top) }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(TandemStyle.canvas)
+    }
+
     private func navigate(_ section: String, sessionId: String? = nil) {
         pendingSession = sessionId
         navigation.select(section, hasChanges: hasUnsavedChanges)
@@ -144,24 +186,29 @@ struct AssistantView: View {
 
     private var conversation: some View {
         VStack(spacing: 0) {
-            PageHeader(title: "对话") {
-                if let interrupted = model.snapshot?.focus.interruptedSessionId {
-                    Button("恢复原话题") { Task { await model.focus(interrupted) } }
+            VStack(spacing: 0) {
+                PageHeader(title: "对话") {
+                    if let interrupted = model.snapshot?.focus.interruptedSessionId {
+                        Button("恢复原话题") { Task { await model.focus(interrupted) } }
+                    }
+                    Menu { topicActions } label: { TandemMenuLabel { Label("新话题", systemImage: "square.and.pencil") } }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().focusEffectDisabled()
                 }
-                Menu { topicActions } label: { TandemMenuLabel { Label("新话题", systemImage: "square.and.pencil") } }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().focusEffectDisabled()
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 16) { topicTitle; Spacer(); historyFilter }
+                    VStack(alignment: .leading, spacing: 12) { topicTitle; historyFilter }
+                }
+                .padding(.horizontal, 32).padding(.vertical, 16)
             }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 16) { topicTitle; Spacer(); historyFilter }
-                VStack(alignment: .leading, spacing: 12) { topicTitle; historyFilter }
-            }
-            .padding(.horizontal, 32).padding(.vertical, 16)
+            .contentShape(Rectangle())
+            .onTapGesture { composerFocused = false }
             GeometryReader { geometry in
                 ConversationScrollView(position: $scrollPosition,
                                        messages: model.messages.filter { filterProject == "*" || ($0.projectId ?? "") == filterProject },
                                        lastSequence: model.messages.last.flatMap { timelineSequences.contains($0.sequence) ? $0.sequence : nil },
                                        ready: readingPositionReady && navigation.value == "assistant", sending: model.sending,
-                                       navigationHeight: max(0, geometry.size.height - 24), savePosition: saveReadingPosition) {
+                                       navigationHeight: max(0, geometry.size.height - 24), savePosition: saveReadingPosition,
+                                       onScrollSettled: { if !readingPositionReady { scrollSettled = true } }) {
                     LazyVStack(alignment: .leading, spacing: 32) {
                         if model.hasMore { Button("加载更早的消息") { Task { await model.loadEarlier() } }.frame(maxWidth: .infinity) }
                         if model.snapshot == nil {
@@ -219,6 +266,19 @@ struct AssistantView: View {
                     .padding(.horizontal, 32).padding(.vertical, 24)
                     .frame(maxWidth: .infinity)
                 }
+                // Hidden until the saved reading position is restored; otherwise the list visibly jumps
+                // as messages arrive and the initial scroll correction lands.
+                .opacity(readingPositionReady ? 1 : 0)
+                .overlay {
+                    if !readingPositionReady {
+                        VStack(spacing: 16) {
+                            ProgressView(runtime.isConnected ? "正在载入对话…" : "正在启动本地运行环境…")
+                            Text(runtime.status).font(.caption).foregroundStyle(TandemStyle.secondary)
+                        }
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { composerFocused = false }
                 .task(id: model.snapshot?.generation) {
                     guard let generation = model.snapshot?.generation else { return }
                     readingPositionReady = false
@@ -227,21 +287,23 @@ struct AssistantView: View {
                        filter == "*" || filter.isEmpty || model.snapshot?.projects.contains(where: { $0.id == filter }) == true {
                         filterProject = filter
                     }
-                    if let saved, !saved.atBottom {
-                        await model.loadHistory(through: saved.sequence)
-                    }
                     guard !Task.isCancelled, model.snapshot?.generation == generation else { return }
                     await Task.yield()
-                    if let saved, !saved.atBottom, timelineSequences.contains(saved.sequence) {
-                        scrollPosition.scrollTo(id: saved.sequence, anchor: .top)
-                    } else {
-                        scrollPosition.scrollTo(edge: .bottom)
+                    scrollSettled = false
+                    // A cold launch (and a topic switch) starts at the live end of the conversation.
+                    // Page switches keep the mounted scroll view exactly where it was.
+                    scrollPosition.scrollTo(edge: .bottom)
+                    let deadline = ContinuousClock.now.advanced(by: .milliseconds(1500))
+                    while !scrollSettled, ContinuousClock.now < deadline {
+                        try? await Task.sleep(for: .milliseconds(20))
                     }
+                    guard !Task.isCancelled, model.snapshot?.generation == generation else { return }
                     readingPositionReady = true
                 }
             }
             composer
         }
+        .ignoresSafeArea(.container, edges: .top)
         .inspector(isPresented: Binding(get: { detailMessageId != nil }, set: { if !$0 { detailMessageId = nil } })) {
             if let message = model.messages.first(where: { $0.id == detailMessageId }) {
                 MessageDetailsView(message: message, model: model) {
@@ -345,7 +407,7 @@ struct AssistantView: View {
             }
             .padding(.horizontal, 18).padding(.top, 18).padding(.bottom, 10)
             .background(TandemStyle.canvas, in: RoundedRectangle(cornerRadius: 14))
-            .overlay { RoundedRectangle(cornerRadius: 14).stroke(composerFocused ? TandemStyle.accent : TandemStyle.border, lineWidth: composerFocused ? 2 : 1) }
+            .overlay { RoundedRectangle(cornerRadius: 14).stroke(TandemStyle.inputBorder, lineWidth: 1) }
         }
         .frame(maxWidth: 724).padding(.horizontal, 32).padding(.top, 12).padding(.bottom, 20)
         .frame(maxWidth: .infinity).background(TandemStyle.canvas)
