@@ -36,13 +36,19 @@ export function startRuntime(config: Bootstrap, service?: AppService) {
             const expected = Buffer.from(config.token);
             if (request.method !== 'hello' || token.length !== expected.length || !timingSafeEqual(token, expected)) throw new Error('UNAUTHORIZED');
             authenticated = true;
+            socket.setTimeout(0);
             reply({ pid: process.pid, arch: process.arch, nodeVersion: process.version });
           } else if (request.method === 'ping') {
             reply({ pong: true, pid: process.pid });
           } else {
             try {
               if (!service) throw new AppError('METHOD_NOT_FOUND');
-              reply(service.dispatch(request.method, request.payload));
+              const result = service.dispatch(request.method, request.payload);
+              if (result instanceof Promise) void result.then(reply, error => {
+                socket.write(encodeFrame({ protocolVersion: 1, requestId: request.requestId, ok: false,
+                  error: { code: error instanceof AppError ? error.code : 'LOCAL_STORAGE_ERROR', retryable: false } }));
+              });
+              else reply(result);
             } catch (error) {
               socket.write(encodeFrame({ protocolVersion: 1, requestId: request.requestId, ok: false,
                 error: { code: error instanceof AppError ? error.code : 'LOCAL_STORAGE_ERROR', retryable: false } }));

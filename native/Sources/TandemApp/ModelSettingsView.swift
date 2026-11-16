@@ -73,12 +73,19 @@ struct ModelSettingsView: View {
                         Text("~/.tandem/config.json").font(.caption.monospaced()).foregroundStyle(TandemStyle.secondary).textSelection(.enabled)
                     }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
                         .background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+                    BackupSettingsView(model: model, busy: $busy, hasUnsavedChanges: dirty) {
+                        await load()
+                        await model.refresh()
+                    }
                 }.padding(32).frame(maxWidth: 1060, alignment: .leading).frame(maxWidth: .infinity)
             }
             .disabled(isWorking)
         }
         .textFieldStyle(TandemTextFieldStyle())
         .task { await load() }
+        .onChange(of: model.snapshot?.generation) { old, new in
+            if old != nil, new != old, !dirty, !busy { Task { await load() } }
+        }
         .onChange(of: dirty, initial: true) { _, value in hasUnsavedChanges = value }
         .confirmationDialog("放弃修改并重新加载？", isPresented: $confirmReload) {
             Button("放弃修改并重新加载", role: .destructive) { Task { await load() } }

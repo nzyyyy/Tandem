@@ -73,6 +73,8 @@ final class IPCConnection: @unchecked Sendable {
     func request(_ method: String, payload: [String: Any] = [:]) throws -> [String: Any] {
         lock.lock()
         defer { lock.unlock() }
+        var timeout = timeval(tv_sec: method.hasPrefix("backup.") ? 120 : 2, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
         let id = UUID().uuidString
         let frame = try Frame.encode([
             "protocolVersion": 1, "requestId": id, "method": method,

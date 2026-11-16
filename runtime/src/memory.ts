@@ -81,6 +81,29 @@ export class MemoryEngine {
     if (m) this.db.prepare('INSERT INTO memory_search VALUES(?,?)').run(id,words(`${m.subject} ${m.predicate} ${m.content}`).join(' '));
     this.changed(id);
   }
+  rebuildSearch() {
+    this.db.exec('DELETE FROM memory_search');
+    for (const m of this.db.prepare("SELECT * FROM memories WHERE status='active'").all())
+      this.db.prepare('INSERT INTO memory_search VALUES(?,?)').run(m.id, words(`${m.subject} ${m.predicate} ${m.content}`).join(' '));
+  }
+  mergeForgetMarkers(markers: Row[]) {
+    this.store.transaction(() => {
+      for (const marker of markers) {
+        const old = this.db.prepare('SELECT * FROM memory_forget_markers WHERE id=?').get(marker.id);
+        requireValue(!old || (old.scope === marker.scope && old.key_hash === marker.key_hash), 'BACKUP_DATABASE');
+        const evidence = [...new Set<string>([...JSON.parse(String(marker.evidence_ids)), ...(old ? JSON.parse(String(old.evidence_ids)) : [])])];
+        this.db.prepare('INSERT INTO memory_forget_markers VALUES(?,?,?,?,?,NULL) ON CONFLICT(id) DO UPDATE SET evidence_ids=excluded.evidence_ids,released_at=NULL')
+          .run(marker.id,marker.scope,marker.key_hash,JSON.stringify(evidence),marker.created_at);
+      }
+      for (const marker of this.db.prepare('SELECT * FROM memory_forget_markers WHERE released_at IS NULL').all()) {
+        const sources: string[] = JSON.parse(String(marker.evidence_ids));
+        const ids = this.db.prepare('SELECT id FROM memories WHERE COALESCE(project_id,\'\')=? AND key_hash=?').all(marker.scope,marker.key_hash)
+          .filter(m => this.db.prepare('SELECT message_id FROM memory_evidence WHERE memory_id=?').all(m.id).some(e => sources.includes(String(e.message_id)))).map(m => String(m.id));
+        this.invalidateCopies([...ids,...sources],true);
+        for (const id of ids) { this.db.prepare('DELETE FROM memory_search WHERE memory_id=?').run(id); this.db.prepare('DELETE FROM memories WHERE id=?').run(id); }
+      }
+    });
+  }
   private changed(id: string) {
     this.db.prepare("INSERT INTO events(id,schema_version,type,aggregate_id,correlation_id,occurred_at,payload_ref) VALUES(?,1,'memory.changed',?,?,?,?)").run(randomUUID(),id,id,Date.now(),id);
   }

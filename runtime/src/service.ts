@@ -9,14 +9,19 @@ import { generate } from './model.ts';
 import { runWithPi } from './pi.ts';
 import type { BoundModel, ChatMessage } from './model.ts';
 import { memoryScopeAllowed } from './memory.ts';
+import { Backups, recoverRestore } from './backup.ts';
 
 const fingerprint = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 export class AppService {
   readonly config: ConfigStore;
-  readonly store: Store;
-  readonly context: ContextService;
-  readonly execution: Execution;
+  store: Store;
+  context: ContextService;
+  execution: Execution;
+  readonly backups: Backups;
+  private maintenance = false;
+  private restoring: Promise<unknown> | null = null;
+  private generation: string;
   private stopped = false;
   private active = new Map<string, { sessionId: string; abort: AbortController }>();
   private jobs = new Set<Promise<void>>();
@@ -24,7 +29,9 @@ export class AppService {
   private configError: string | null = null;
 
   constructor(directory: string) {
+    recoverRestore(directory);
     this.config = new ConfigStore(directory); this.store = new Store(directory);
+    this.backups = new Backups(directory); this.generation = this.backups.generation();
     try { this.reloadConfiguration(); } catch { /* Show the repair state without replacing the file. */ }
     this.execution = new Execution(this.store, () => this.currentConfig());
     this.context = new ContextService(this.store, () => this.currentConfig(), (...args) => this.createRun(...args), id => this.cancelRun(id));
@@ -49,6 +56,19 @@ export class AppService {
   dispatch(method: string, value: unknown): unknown {
     requireValue(!this.stopped, 'RUNTIME_STOPPING');
     const payload = record(value ?? {});
+    if (method === 'runtime.info') return { generation: this.generation };
+    if (method === 'native.next') return { ...(this.maintenance ? { requests: [] } : this.execution.dispatch(method, payload) as object), generation: this.generation };
+    requireValue(!this.maintenance || method === 'native.result', 'BACKUP_BUSY');
+    if (method === 'backup.export') return this.backups.export(this.store, this.config, payload.path);
+    if (method === 'backup.preview') return this.backups.preview(payload.path, this.store);
+    if (method === 'backup.cancel') return this.backups.cancel(payload.token);
+    if (method === 'backup.restore') {
+      requireValue(payload.confirm === true, 'RESTORE_CONFIRM_REQUIRED');
+      this.backups.staged(payload.token);
+      const job = this.restore(payload.token).finally(() => { this.restoring = null; });
+      this.restoring = job;
+      return job;
+    }
     if (method === 'config.get') return this.reloadConfiguration();
     if (method === 'config.save') {
       const result = this.config.save(payload.config, payload.expectedRevision);
@@ -59,8 +79,8 @@ export class AppService {
       const surfaceId = text(payload.surfaceId);
       const config = this.configuration?.config ?? { modelConnections: [], defaultModel: null };
       const messages = this.store.timeline();
-      const changes = this.store.changes(payload.afterSequence);
-      return { activity: this.execution.state(surfaceId), projects: this.context.projects(), pendingInteractions: this.context.pending(surfaceId), focus: this.store.focus(surfaceId), configError: this.configError,
+      const changes = this.store.changes(payload.generation && payload.generation !== this.generation ? undefined : payload.afterSequence);
+      return { generation: this.generation, activity: this.execution.state(surfaceId), projects: this.context.projects(), pendingInteractions: this.context.pending(surfaceId), focus: this.store.focus(surfaceId), configError: this.configError,
         models: config.modelConnections.flatMap(item => item.modelNames.map(modelName => ({ connectionId: item.id, connectionName: item.name ?? new URL(item.url).hostname, modelName, apiType: item.apiType }))),
         defaultModel: config.defaultModel, messages, changedMessages: changes.messages, cursor: changes.cursor, hasMore: messages.length === 10,
         sessions: this.context.sessions(surfaceId) };
@@ -84,6 +104,46 @@ export class AppService {
     const executionResult = this.execution.dispatch(method,payload);
     if (executionResult !== undefined) { this.kick(); return executionResult; }
     throw new AppError('METHOD_NOT_FOUND');
+  }
+
+  private async restore(token: unknown) {
+    this.maintenance = true;
+    try {
+      for (const item of this.active.values()) item.abort.abort();
+      await Promise.all(this.jobs);
+      requireValue(!this.stopped, 'RUNTIME_STOPPING');
+      const stage = this.backups.staged(token);
+      const staged = new Store(stage);
+      try {
+        const config = new ConfigStore(stage).read().config;
+        const execution = new Execution(staged, () => config);
+        const context = new ContextService(staged, () => config, () => { throw new AppError('BACKUP_BUSY'); }, id => {
+          staged.db.prepare("UPDATE runs SET status='cancelled',error_code='CANCELLED' WHERE id=? AND status IN('queued','running','waiting_approval','paused','interrupted')").run(id);
+          execution.invalidate(id);
+        });
+        context.memory.mergeForgetMarkers(this.store.db.prepare('SELECT * FROM memory_forget_markers WHERE released_at IS NULL').all());
+        staged.transaction(() => {
+          staged.db.exec("UPDATE approvals SET status='invalid' WHERE status IN('pending','approved'); DELETE FROM delete_previews;");
+          staged.db.exec("UPDATE invocations SET status='completed',result='{\"error\":\"APPROVAL_RESTORED\"}' WHERE name='request_directory' AND status!='completed';");
+          staged.db.exec("UPDATE invocations SET status='unknown' WHERE status!='completed' AND name NOT IN('request_directory','read_file','list_directory');");
+          staged.db.exec("UPDATE run_steps SET status='interrupted' WHERE status IN('running','waiting_approval');");
+        });
+        context.memory.rebuildSearch();
+        requireValue(staged.db.prepare('PRAGMA integrity_check').get()!.integrity_check === 'ok'
+          && staged.db.prepare('PRAGMA foreign_key_check').all().length === 0, 'BACKUP_DATABASE');
+        staged.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      } finally { staged.db.close(); }
+      const result = this.backups.switch(token, () => {
+        if (this.store.db.isOpen) { this.store.db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); this.store.db.close(); }
+      }, () => {
+        this.store = new Store(this.config.directory);
+        try { this.reloadConfiguration(); } catch { /* A rolled-back invalid config keeps the existing repair state. */ }
+        this.execution = new Execution(this.store, () => this.currentConfig());
+        this.context = new ContextService(this.store, () => this.currentConfig(), (...args) => this.createRun(...args), id => this.cancelRun(id));
+        this.generation = this.backups.generation();
+      });
+      return { ...result, generation: this.generation };
+    } finally { this.maintenance = false; }
   }
 
   private cancelRun(id: string) {
@@ -170,7 +230,7 @@ export class AppService {
 
   private kick() {
     queueMicrotask(() => {
-      if (this.stopped) return;
+      if (this.stopped || this.maintenance) return;
       const sessions = new Set([...this.active.values()].map(item => item.sessionId));
       for (const run of this.store.db.prepare("SELECT r.* FROM runs r JOIN messages m ON m.id=r.user_message_id WHERE r.status='queued' ORDER BY m.sequence,r.attempt,r.rowid").all()) {
         if (this.active.size >= 2) break;
@@ -278,9 +338,9 @@ export class AppService {
         this.store.runStatus(String(run.id),'paused','BUDGET_EXHAUSTED'); return;
       }
       this.store.db.prepare("UPDATE run_steps SET status='interrupted' WHERE run_id=? AND status='running'").run(run.id);
-      const code = this.stopped ? 'INTERRUPTED' : error instanceof AppError ? error.code : 'MODEL_FAILED';
+      const code = this.stopped || this.maintenance ? 'INTERRUPTED' : error instanceof AppError ? error.code : 'MODEL_FAILED';
       const current = this.store.db.prepare('SELECT status FROM runs WHERE id=?').get(run.id);
-      if (current && ['queued', 'running'].includes(String(current.status))) this.store.runStatus(String(run.id), this.stopped ? 'interrupted' : code === 'CANCELLED' ? 'cancelled' : 'failed', code);
+      if (current && ['queued', 'running'].includes(String(current.status))) this.store.runStatus(String(run.id), this.stopped || this.maintenance ? 'interrupted' : code === 'CANCELLED' ? 'cancelled' : 'failed', code);
     } finally {
       const progress = this.execution.progress(String(run.id));
       if (progress) this.execution.charge(String(run.id),Math.max(0,Date.now()-started-(Number(progress.active_ms)-previousActive)),0,false);
@@ -291,8 +351,10 @@ export class AppService {
     if (this.stopped) return;
     this.stopped = true;
     for (const item of this.active.values()) item.abort.abort();
+    await this.restoring?.catch(() => {});
     await Promise.all(this.jobs);
     for (const run of this.store.db.prepare("SELECT id FROM runs WHERE status IN('queued','running','waiting_approval')").all()) this.store.runStatus(String(run.id), 'interrupted', 'INTERRUPTED');
+    this.backups.cancel();
     this.store.db.close();
   }
 }

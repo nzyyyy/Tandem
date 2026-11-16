@@ -19,6 +19,15 @@ public final class RuntimeSupervisor: ObservableObject {
     private var directory: String?
     private var stopping = false
     public let directories = DirectoryAccess()
+    private var dataGeneration: String?
+
+    private func updateGeneration(_ value: String?) {
+        guard let value else { return }
+        if let previous = dataGeneration, previous != value {
+            for grant in directories.registrations() { directories.revoke(grant["id"] as! String) }
+        }
+        dataGeneration = value
+    }
 
     public init() {}
 
@@ -81,6 +90,8 @@ public final class RuntimeSupervisor: ObservableObject {
                                 return client
                             }.value
                             let client = connection!
+                            let info = try await Task.detached { try client.request("runtime.info") }.value
+                            updateGeneration(info["generation"] as? String)
                             let registrations = directories.registrations()
                             let access = directories
                             try await Task.detached {
@@ -99,8 +110,10 @@ public final class RuntimeSupervisor: ObservableObject {
                             guard data["pong"] as? Bool == true else { throw IPCError.response }
                         }.value
                         let access = directories
+                        let next = try await Task.detached { try client.request("native.next") }.value
+                        updateGeneration(next["generation"] as? String)
                         try await Task.detached {
-                            let work = try client.request("native.next")["requests"] as? [[String: Any]] ?? []
+                            let work = next["requests"] as? [[String: Any]] ?? []
                             for request in work {
                                 let result = access.execute(request)
                                 _ = try client.request("native.result", payload: ["id": request["id"]!, "result": result])
@@ -189,6 +202,8 @@ public final class RuntimeSupervisor: ObservableObject {
 
     public func request(_ method: String, payload: [String: Any] = [:]) async throws -> [String: Any] {
         guard !stopping, let client = connection else { throw IPCError.remote("RUNTIME_DISCONNECTED") }
-        return try await Task.detached { try client.request(method, payload: payload) }.value
+        let result = try await Task.detached { try client.request(method, payload: payload) }.value
+        if method == "backup.restore" { updateGeneration(result["generation"] as? String) }
+        return result
     }
 }

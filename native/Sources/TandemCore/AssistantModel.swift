@@ -94,6 +94,7 @@ public struct TimelineMessage: Codable, Equatable, Identifiable {
     public var snapshotId: String?
 }
 public struct AssistantSnapshot: Codable, Equatable {
+    public var generation: String? = nil
     public var activity: ActivityState
     public var projects: [TandemProject]
     public var pendingInteractions: [PendingInteraction]
@@ -173,6 +174,21 @@ public struct CorrectionHistory: Codable { public var corrections: [CorrectionRe
 
 public func userFacingError(_ code: String) -> String {
     let messages = [
+        "BACKUP_BUSY": "正在恢复备份，请稍后再操作。",
+        "BACKUP_SIZE": "备份超过大小限制或文件类型不受支持；当前最多 128 MiB 数据、4096 个文件。",
+        "BACKUP_CHANGED": "备份源文件发生变化，请重新选择。",
+        "BACKUP_DESTINATION": "请选择应用数据目录以外的新文件名，已有文件不会被覆盖。",
+        "BACKUP_VERSION": "备份或数据版本不受支持，当前数据未被替换。",
+        "BACKUP_FORMAT": "备份文件格式无效或内容不完整，当前数据未被替换。",
+        "BACKUP_PATH": "备份包含不支持的路径、链接或文件结构，已拒绝。",
+        "BACKUP_CHECKSUM": "备份内容与校验值不符，已拒绝恢复。",
+        "BACKUP_DATABASE": "备份数据库未通过完整性或结构校验，已拒绝恢复。",
+        "BACKUP_CREDENTIALS": "备份包含模型 Key，已拒绝恢复。请选择由 Tandem 导出的脱敏备份。",
+        "RESTORE_PREVIEW_EXPIRED": "恢复预览已过期，请重新选择备份并核对。",
+        "RESTORE_CONFIRM_REQUIRED": "请先核对备份预览，再明确确认替换并恢复。",
+        "RESTORE_JOURNAL": "上次恢复尚未完成，保护副本已保留；请检查磁盘权限和恢复记录。",
+        "TOOL_RESULT_UNKNOWN": "工具结果尚未核实，不能重复执行。请检查已有产物后手动重新处理。",
+        "APPROVAL_RESTORED": "备份中的旧审批不可重用，请重新发起目录授权请求。",
         "PROJECT_LIMIT": "当前验证版本最多保留 200 个项目。请先整理已有项目。",
         "MEMORY_SENSITIVE": "记忆中可能包含敏感信息或凭据，未保存。",
         "MEMORY_FORGOTTEN": "此原始证据受遗忘标记保护。请先在长期记忆中明确允许重新记住。",
@@ -285,9 +301,11 @@ public final class AssistantModel: ObservableObject {
         refreshing = true
         defer { refreshing = false }
         var payload: [String: Any] = ["surfaceId": surfaceId]
+        if let generation = snapshot?.generation { payload["generation"] = generation }
         if let cursor { payload["afterSequence"] = cursor }
         do {
             let state = try await call("state.get", payload: payload, as: AssistantSnapshot.self)
+            if snapshot?.generation != state.generation { messages = []; cursor = nil; error = nil }
             if snapshot == nil { error = nil }
             if cursor == nil { hasMore = state.hasMore }
             merge(state.messages)

@@ -81,5 +81,5 @@ try {
   timer = setTimeout(() => child.kill('SIGKILL'), 45000);
   const [code] = await once(child, 'exit');
   assert.equal(code, 0);
-  assert.deepEqual(paths, ['/v1/responses', '/v1/chat/completions', '/v1/messages', '/v1/messages', '/v1/messages', '/v1/messages', '/v1/chat/completions', '/v1/chat/completions', '/v1/chat/completions']);
+  assert.deepEqual(paths, ['/v1/responses', '/v1/chat/completions', '/v1/messages', '/v1/messages', '/v1/messages', '/v1/messages', '/v1/chat/completions', '/v1/chat/completions', '/v1/chat/completions', '/v1/chat/completions']);
 } finally { clearTimeout(timer); server.closeAllConnections(); server.close(); if (isolated) rmSync(isolated, { recursive: true, force: true }); }

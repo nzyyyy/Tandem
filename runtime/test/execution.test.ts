@@ -44,7 +44,7 @@ test('pi schema coercion cannot authorize a native read with invalid original li
     await wait(() => f.requests.length === 1);
     f.reply(0, '', [call('raw-read', 'read_file', { grantId: 'grant', path: 'notes.md', startLine: '1', endLine: 2 })]);
     await wait(() => f.requests.length === 2);
-    assert.deepEqual(f.service.dispatch('native.next', {}), { requests: [] });
+    assert.deepEqual(f.service.dispatch('native.next', {}), { requests: [], ...(f.service.dispatch('runtime.info', {}) as object) });
     assert.equal(JSON.parse(f.requests[1].input.messages.at(-1).content).error, 'TOOL_ARGUMENTS');
     const invocation = f.service.store.db.prepare('SELECT args FROM invocations WHERE call_id=?').get('raw-read')!;
     assert.equal(JSON.parse(String(invocation.args)).startLine, '1');

@@ -122,7 +122,8 @@ func smokeTest() async {
     let arguments = CommandLine.arguments
     guard arguments.count == 5 else { exit(2) }
     let runtime = RuntimeSupervisor()
-    let dataDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("tandem-smoke-\(UUID().uuidString)")
+    let sandbox = FileManager.default.temporaryDirectory.appendingPathComponent("tandem-smoke-\(UUID().uuidString)")
+    let dataDirectory = sandbox.appendingPathComponent("live")
     func waitFor(_ condition: () -> Bool) async throws {
         for _ in 0..<200 {
             if condition() { return }
@@ -211,7 +212,7 @@ func smokeTest() async {
         guard assistant.messages.last?.executionProjectId == targetId else { throw IPCError.response }
         let unchanged = try await assistant.context(snapshotId)
         guard unchanged.projectId == projectId, unchanged.fragments.first?.content == "M2 scoped question" else { throw IPCError.response }
-        let resources = dataDirectory.appendingPathComponent("resources")
+        let resources = sandbox.appendingPathComponent("resources")
         try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
         let source = resources.appendingPathComponent("notes.md")
         try "原生读取资料\n第二行".write(to: source, atomically: true, encoding: .utf8)
@@ -240,22 +241,50 @@ func smokeTest() async {
         let detail = try await runtime.request("memory.get", payload: ["surfaceId": "smoke", "id": memoryId])
         guard let version = detail["version"] as? Int,
               (detail["evidence"] as? [[String: Any]])?.first?["message_id"] as? String == evidence.id else { throw IPCError.response }
+        let backup = sandbox.appendingPathComponent("backup.json")
+        _ = try await runtime.request("backup.export", payload: ["path": backup.path])
         _ = try await runtime.request("memory.forget", payload: ["surfaceId": "smoke", "id": memoryId, "expectedVersion": version])
         let forgotten = try await runtime.request("memory.list", payload: ["surfaceId": "smoke"])
         guard (forgotten["memories"] as? [[String: Any]])?.isEmpty == true,
               (forgotten["markers"] as? [[String: Any]])?.count == 1 else { throw IPCError.response }
         let sanitized = try await assistant.context(memorySnapshotId)
         guard sanitized.fragments.contains(where: { $0.sourceId == memoryId && $0.deleted == true && !$0.content.contains("SQLite") }) else { throw IPCError.response }
+        assistant.newTopic = true; assistant.draft = "Core after backup"
+        await assistant.send()
+        try await waitFor { assistant.messages.last?.status == "completed" }
+        let otherWindow = AssistantModel(runtime: runtime)
+        let otherPolling = Task { await otherWindow.poll(surfaceId: "smoke-other") }
+        defer { otherPolling.cancel() }
+        try await waitFor { otherWindow.messages.contains { $0.content == "Core after backup" } }
+        let generation = assistant.snapshot?.generation
+        let preview = try await runtime.request("backup.preview", payload: ["path": backup.path])
+        guard let token = preview["token"] as? String else { throw IPCError.response }
+        let restoration = try await runtime.request("backup.restore", payload: ["token": token, "confirm": true])
+        try await waitFor {
+            assistant.snapshot?.generation != generation && otherWindow.snapshot?.generation != generation
+                && !assistant.messages.contains { $0.content == "Core after backup" }
+                && !otherWindow.messages.contains { $0.content == "Core after backup" }
+        }
+        let restoredConfig = try await runtime.request("config.get")
+        let restoredMemories = try await runtime.request("memory.list", payload: ["surfaceId": "smoke"])
+        guard runtime.directories.registrations().isEmpty,
+              ((restoredConfig["config"] as? [String: Any])?["modelConnections"] as? [[String: Any]])?.allSatisfy({ $0["key"] as? String == "" }) == true,
+              (restoredMemories["memories"] as? [[String: Any]])?.isEmpty == true,
+              (restoredMemories["markers"] as? [[String: Any]])?.count == 1,
+              let protection = restoration["protectionPath"] as? String,
+              FileManager.default.fileExists(atPath: protection + "/config.json"),
+              try String(contentsOf: source, encoding: .utf8) == "原生读取资料\n第二行" else { throw IPCError.response }
         polling.cancel()
+        otherPolling.cancel()
         await runtime.stop()
         try await Task.sleep(for: .seconds(2))
         guard runtime.nodePID == 0, kill(lastPID, 0) == -1, errno == ESRCH else { throw IPCError.peer }
-        try? FileManager.default.removeItem(at: dataDirectory)
-        print("PASS Swift → Node: three-API chat, M2 routing/correction, M3 native Task, M4 memory evidence/snapshot/forget, persistence, reconnect, crash restart, quit cleanup")
+        try? FileManager.default.removeItem(at: sandbox)
+        print("PASS Swift → Node: three-API chat, M2 routing/correction, M3 native Task, M4 memory, Core backup/restore/forget protection/two-window reload, persistence, reconnect, crash restart, quit cleanup")
         exit(0)
     } catch {
         await runtime.stop()
-        try? FileManager.default.removeItem(at: dataDirectory)
+        try? FileManager.default.removeItem(at: sandbox)
         fputs("FAIL supervisor smoke test\n", stderr)
         exit(1)
     }

@@ -70,6 +70,7 @@ export class Execution {
     const r = this.db.prepare('SELECT r.status,r.interaction_version,i.version FROM runs r JOIN interactions i ON i.id=r.interaction_id WHERE r.id=?').get(run.id);
     requireValue(r && r.interaction_version === r.version && ['running','queued','waiting_approval','paused','interrupted'].includes(String(r.status)), 'INTERACTION_CHANGED');
     const p = this.progress(String(run.id));
+    requireValue(!this.db.prepare("SELECT 1 FROM invocations WHERE run_id=? AND status='unknown'").get(run.id), 'TOOL_RESULT_UNKNOWN');
     if (p.checkpoint) for (const f of JSON.parse(String(p.checkpoint)).fragments) {
       requireValue(!f.deleted && memoryScopeAllowed(f,run.project_id,run.context_mode),'CONTEXT_SCOPE');
       requireValue(memoryFragmentValid(this.store,f,{projectId:run.project_id,mode:run.context_mode}),'MEMORY_UNAVAILABLE');
