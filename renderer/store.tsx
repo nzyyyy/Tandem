@@ -1,6 +1,7 @@
 import { createContext, useContext, useSyncExternalStore } from "react";
 import type {
   AssistantSnapshot,
+  RendererMethod,
   TimelineMessage,
   ApprovalCard,
   ActivityRun,
@@ -23,7 +24,7 @@ export function unwrap<T>(reply: Reply): T {
   return reply.data as T;
 }
 export async function rpc<T>(
-  method: string,
+  method: RendererMethod,
   payload: Payload = {},
 ): Promise<T> {
   return unwrap<T>(await window.tandem.request(method, payload));
@@ -171,7 +172,7 @@ export class AssistantStore {
       ),
     });
   }
-  async perform(method: string, payload: Payload = {}) {
+  async perform(method: RendererMethod, payload: Payload = {}) {
     try {
       await rpc(method, payload);
       this.set({ error: undefined });

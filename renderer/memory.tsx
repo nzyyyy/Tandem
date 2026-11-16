@@ -11,6 +11,7 @@ import {
 } from "./components/ui.tsx";
 import { useAction } from "./components/actions.ts";
 import type { Payload } from "../shared/bridge.ts";
+import type { RendererMethod } from "../shared/model.ts";
 
 type MemoryRecord = {
   id: string;
@@ -96,7 +97,7 @@ export function Memory({
   useEffect(() => {
     onBusy(busy);
   }, [busy, onBusy]);
-  const action = async (method: string, payload: Payload) => {
+  const action = async (method: RendererMethod, payload: Payload) => {
     if (!(await store.perform(method, payload))) return false;
     await reload();
     return true;

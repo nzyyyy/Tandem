@@ -4,6 +4,7 @@ import type {
   AppConfiguration,
   ConfigDocument,
   ModelConnection,
+  RestorePreview,
 } from "../shared/model.ts";
 import { modelId, modelSelection } from "../shared/conversation.ts";
 import { rpc, unwrap, useAssistant } from "./store.tsx";
@@ -19,17 +20,6 @@ import {
 } from "./components/ui.tsx";
 import { useAction } from "./components/actions.ts";
 
-type RestorePreview = {
-  token: string;
-  createdAt: string;
-  appVersion: string;
-  databaseSchema: number;
-  messages: number;
-  projects: number;
-  memories: number;
-  tasks: number;
-  attachments: number;
-};
 const emptyConfig = (): AppConfiguration => ({
   schemaVersion: 1,
   modelConnections: [],

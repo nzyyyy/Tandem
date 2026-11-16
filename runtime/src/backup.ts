@@ -5,13 +5,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { ConfigStore, validateConfig } from './config.ts';
 import { Store } from './store.ts';
 import { AppError, record, requireValue, text } from './errors.ts';
+import type { RestorePreview } from './contract.ts';
 
 const MAX_DATA = 128 * 1024 * 1024;
 const MAX_PACKAGE = 192 * 1024 * 1024;
 const hash = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 type Entry = { path: string; type: 'file'; size: number; sha256: string; data: string };
 type Manifest = { format: 'tandem-backup'; formatVersion: 1; appVersion: string; createdAt: string; databaseSchema: number; configSchema: number; files: Entry[] };
-export type RestorePreview = { token: string; createdAt: string; appVersion: string; databaseSchema: number; messages: number; projects: number; memories: number; tasks: number; attachments: number };
 type Prepared = { directory: string; preview: RestorePreview; expiresAt: number };
 
 const canonical = (directory: string) => join(realpathSync(dirname(resolve(directory))), basename(resolve(directory)));

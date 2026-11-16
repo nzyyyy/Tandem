@@ -3,12 +3,8 @@ import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { AppError, record, requireValue, text } from './errors.ts';
 
-export type ModelSelection = { connectionId: string; modelName: string };
-export type Connection = {
-  id: string; name?: string; protocol: 'openai' | 'anthropic'; apiType: 'chat_completions' | 'responses' | 'messages';
-  url: string; key: string; modelNames: string[];
-};
-export type AppConfig = { schemaVersion: 1; modelConnections: Connection[]; defaultModel: ModelSelection | null };
+import type { AppConfig, Connection, ModelSelection } from './contract.ts';
+export type { AppConfig, Connection, ModelSelection } from './contract.ts';
 export const emptyConfig = (): AppConfig => ({ schemaVersion: 1, modelConnections: [], defaultModel: null });
 
 export function privateDirectory(path: string) {
