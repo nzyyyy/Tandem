@@ -23,16 +23,16 @@ struct ProjectView: View {
         VStack(spacing: 0) {
             PageHeader(title: "项目") {
                 Button { selectProject("") } label: { Label("新建项目", systemImage: "plus") }
-                    .buttonStyle(TandemButtonStyle(.primary)).disabled(working || selection.value.isEmpty)
+                    .disabled(working || selection.value.isEmpty)
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 32) {
+                VStack(alignment: .leading, spacing: 24) {
                     ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .top, spacing: 32) {
-                            projectList.frame(width: 240)
+                        HStack(alignment: .top, spacing: 24) {
+                            projectList.frame(width: 180)
                             Divider()
                             editor.frame(minWidth: 400, maxWidth: .infinity)
-                        }.frame(minWidth: 737)
+                        }.frame(minWidth: 629)
                         VStack(alignment: .leading, spacing: 24) {
                             TandemPicker(title: "选择项目", value: project?.title ?? "创建新项目", selection: Binding(get: { selection.value }, set: { selectProject($0) })) {
                                 Text("创建新项目").tag("")
@@ -43,7 +43,7 @@ struct ProjectView: View {
                             editor
                         }
                     }
-                }.padding(32).frame(maxWidth: 1060, alignment: .leading).frame(maxWidth: .infinity)
+                }.padding(28).frame(maxWidth: 1060, alignment: .leading).frame(maxWidth: .infinity)
             }.disabled(working)
         }
         .textFieldStyle(TandemTextFieldStyle())
@@ -64,12 +64,12 @@ struct ProjectView: View {
             }.padding(.horizontal, 12)
             ForEach(projects) { project in
                 SelectionRow(title: project.title, symbol: project.status == "archived" ? "archivebox" : "folder",
-                             subtitle: project.status == "archived" ? "已归档" : project.description,
+                             subtitle: project.status == "archived" ? "已归档" : nil,
                              selected: selection.value == project.id) {
                     selectProject(project.id)
                 }
             }
-            if projects.isEmpty { Text("还没有项目，先创建一个长期目标。")
+            if projects.isEmpty { Text("暂无项目")
                 .font(.callout).foregroundStyle(TandemStyle.secondary).padding(12) }
             Divider().padding(.top, 8)
             Toggle("显示归档项目", isOn: $showArchived).toggleStyle(.switch).controlSize(.small).font(.system(size: 13))
@@ -79,29 +79,30 @@ struct ProjectView: View {
     private var editor: some View {
         VStack(alignment: .leading, spacing: 28) {
             HStack {
-                Label(project == nil ? "创建新项目" : "项目详情", systemImage: "folder")
-                    .font(.system(size: 17, weight: .semibold))
+                Text(project?.title ?? "新建项目")
+                    .font(.system(size: 17, weight: .semibold)).lineLimit(1).help(project?.title ?? "新建项目")
                 Spacer()
-                if let project { Text(project.status == "archived" ? "已归档" : "进行中").font(.caption).foregroundStyle(TandemStyle.accent) }
+                if working { ProgressView().controlSize(.small) }
+                Button(project == nil ? "创建项目" : "保存修改") { Task { await save(status: project?.status ?? "open") } }
+                    .buttonStyle(TandemButtonStyle(.primary))
+                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || working)
             }
             EditorField(title: "项目名称") { TextField("名称", text: $title).accessibilityLabel("项目名称") }
             EditorField(title: "目标或说明") {
                 TextField("目标或背景", text: $description, axis: .vertical)
                     .lineLimit(5...10).accessibilityLabel("目标或说明")
             }
-            HStack(spacing: 12) {
-                Button(project == nil ? "创建项目" : "保存修改") { Task { await save(status: project?.status ?? "open") } }
-                    .buttonStyle(TandemButtonStyle(.primary)).controlSize(.large)
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || working)
-                if working { ProgressView().controlSize(.small) }
-                else if dirty { Text("未保存修改").font(.caption).foregroundStyle(TandemStyle.secondary) }
+            if dirty || project?.status == "archived" {
+                HStack(spacing: 12) {
+                    if project?.status == "archived" { Text("已归档").font(.caption).foregroundStyle(TandemStyle.secondary) }
+                    if dirty { Text("未保存").font(.caption).foregroundStyle(TandemStyle.secondary) }
+                }
             }
             if let error { Text(error).font(.callout).foregroundStyle(.red) }
             if let error = model.error { Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled) }
             if let p = project {
                 Divider()
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("项目管理").font(.system(size: 14, weight: .semibold))
                     Button(p.status == "archived" ? "恢复项目" : "归档项目") {
                         Task { await save(status: p.status == "archived" ? "open" : "archived") }
                     }.disabled(working || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -193,15 +194,18 @@ struct ContextControls: View {
                 Text("上下文范围").font(.headline)
                 modePicker
                 projectPicker
-                Text(mode == "isolated" ? "仅使用所选项目的来源，不加载全局记忆。" : "选择本次讨论的项目范围。更改后点击应用。")
+                LabeledContent("当前", value: summary)
                     .font(.caption).foregroundStyle(TandemStyle.secondary)
+                if mode == "isolated" {
+                    Text("仅限所选项目 · 不加载全局记忆").font(.caption).foregroundStyle(TandemStyle.secondary)
+                }
                 if let error = model.error { Text(error).font(.caption).foregroundStyle(.red) }
                 HStack {
                     Spacer()
                     Button("关闭") { expanded = false }.disabled(applying)
                     applyButton
                 }
-            }.padding(20).frame(width: 340).background(TandemStyle.canvas).foregroundStyle(TandemStyle.ink)
+            }.padding(20).frame(width: 320).background(TandemStyle.canvas).foregroundStyle(TandemStyle.ink)
                 .disabled(applying)
         }
         .onChange(of: expanded) { _, open in if open { loadFocus() } }

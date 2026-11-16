@@ -62,25 +62,34 @@ struct MemoryView: View {
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    TextField("搜索事实、决策及历史", text: $query).textFieldStyle(.roundedBorder)
+                    TextField("搜索记忆", text: $query).textFieldStyle(TandemTextFieldStyle())
+                        .accessibilityLabel("搜索事实、决策及历史")
                         .onSubmit { Task { await reload() } }
                     if let error { Text(error).foregroundStyle(.red) }
-                    ForEach(records) { record in
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text(record.kind == "decision" ? "决策" : "事实").font(.caption.weight(.semibold))
-                                Text(statusTitle(record.status)).font(.caption).foregroundStyle(TandemStyle.secondary)
-                                    .help("暂停、候选及历史版本不会作为现行知识使用。")
-                                Text(model.projectTitle(record.project_id)).font(.caption).foregroundStyle(TandemStyle.secondary)
-                                Spacer()
-                                Button("证据与修正") { Task { await select(record) } }
-                                Button("遗忘", role: .destructive) { forgetTarget = record }
+                    let groups = Dictionary(grouping: records) { $0.project_id ?? "" }
+                    ForEach(groups.keys.sorted(), id: \.self) { scope in
+                        VStack(alignment: .leading, spacing: 0) {
+                            Label(scope.isEmpty ? "全局" : model.projectTitle(scope), systemImage: scope.isEmpty ? "globe" : "folder")
+                                .font(.system(size: 13, weight: .semibold)).foregroundStyle(TandemStyle.secondary)
+                                .padding(.bottom, 8)
+                            ForEach(groups[scope] ?? []) { record in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Text(record.kind == "decision" ? "决策" : "事实").font(.caption.weight(.semibold))
+                                        Text(statusTitle(record.status)).font(.caption).foregroundStyle(TandemStyle.secondary)
+                                            .help("暂停、候选及历史版本不会作为现行知识使用。")
+                                        Spacer()
+                                        Button("证据与修正") { Task { await select(record) } }
+                                        Button("遗忘", role: .destructive) { forgetTarget = record }
+                                    }
+                                    Text("\(record.subject) · \(record.predicate)：\(record.content)").textSelection(.enabled)
+                                    Text(record.confirmed_at == nil ? (record.origin == "user_statement" ? "用户陈述 · 未确认" : "用户消息 · 候选") : "已确认")
+                                        .font(.caption).foregroundStyle(TandemStyle.secondary)
+                                    if let old = record.supersedes_id { Text("替代版本：\(old)").font(.caption).textSelection(.enabled) }
+                                }.padding(.vertical, 16)
+                                    .overlay(alignment: .bottom) { Divider() }
                             }
-                            Text("\(record.subject) · \(record.predicate)：\(record.content)").textSelection(.enabled)
-                            Text(record.confirmed_at == nil ? (record.origin == "user_statement" ? "自动保存 / 用户陈述来源 · 未经用户确认" : "候选 / 用户消息来源") : "用户已确认")
-                                .font(.caption).foregroundStyle(TandemStyle.secondary)
-                            if let old = record.supersedes_id { Text("替代版本：\(old)").font(.caption).textSelection(.enabled) }
-                        }.padding(16).background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 10))
+                        }
                     }
                     if records.isEmpty { Text("暂无匹配记忆").foregroundStyle(TandemStyle.secondary) }
                     if !markers.isEmpty {

@@ -21,7 +21,7 @@ struct MarkdownView: View {
     init(_ source: String) { self.source = source }
     var body: some View {
         StructuredText(source, parser: ChatMarkdownParser())
-            .textual.inlineStyle(InlineStyle.gitHub.link(.foregroundColor(TandemStyle.accent)))
+            .textual.inlineStyle(InlineStyle.gitHub.link(.foregroundColor(TandemStyle.ink), .underlineStyle(.single)))
             .textual.codeBlockStyle(ChatCodeBlockStyle())
             .textual.tableStyle(ChatTableStyle())
             .textual.structuredTextStyle(.gitHub)

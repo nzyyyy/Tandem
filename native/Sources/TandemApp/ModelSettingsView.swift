@@ -23,15 +23,16 @@ struct ModelSettingsView: View {
         VStack(spacing: 0) {
             PageHeader(title: "模型设置") {
                 if isWorking { ProgressView().controlSize(.small) }
-                if dirty { Text("未保存修改").font(.caption).foregroundStyle(TandemStyle.secondary) }
-                Button("重新加载") {
+                if dirty { Text("未保存").font(.caption).foregroundStyle(TandemStyle.secondary) }
+                Button {
                     if dirty { confirmReload = true } else { Task { await load() } }
-                }.disabled(isWorking)
+                } label: { Image(systemName: "arrow.clockwise") }
+                    .disabled(isWorking).help("重新加载").accessibilityLabel("重新加载")
                 Button("保存配置") { Task { await save() } }
                     .buttonStyle(TandemButtonStyle(.primary)).disabled(isWorking || revision == nil || hasModelDrafts)
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 32) {
+                VStack(alignment: .leading, spacing: 28) {
                     defaultModel
                     HStack {
                         Text("模型供应商").font(.system(size: 15, weight: .semibold))
@@ -66,18 +67,19 @@ struct ModelSettingsView: View {
                             .padding(16).frame(maxWidth: .infinity, alignment: .leading)
                             .background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 10))
                     }
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("本机保存", systemImage: "internaldrive").font(.system(size: 13, weight: .medium))
-                        Text("API Key 以明文保存在当前用户可读写的 config.json。正常退出后保留，不写入聊天数据库或日志。")
-                            .font(.caption).foregroundStyle(TandemStyle.secondary)
-                        Text("~/.tandem/config.json").font(.caption.monospaced()).foregroundStyle(TandemStyle.secondary).textSelection(.enabled)
-                    }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "internaldrive")
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("本机明文存储")
+                            Text("~/.tandem/config.json").font(.caption.monospaced()).textSelection(.enabled)
+                        }
+                    }.font(.caption).foregroundStyle(TandemStyle.secondary)
+                        .help("API Key 正常退出后保留，不写入聊天数据库或日志。")
                     BackupSettingsView(model: model, busy: $busy, hasUnsavedChanges: dirty) {
                         await load()
                         await model.refresh()
                     }
-                }.padding(32).frame(maxWidth: 1060, alignment: .leading).frame(maxWidth: .infinity)
+                }.padding(28).frame(maxWidth: 1060, alignment: .leading).frame(maxWidth: .infinity)
             }
             .disabled(isWorking)
         }
@@ -106,8 +108,7 @@ struct ModelSettingsView: View {
                     }
                 }
             }.labelsHidden().frame(maxWidth: 420).disabled(revision == nil).accessibilityLabel("全局默认模型")
-        }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
-            .background(TandemStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+        }.frame(maxWidth: .infinity, alignment: .leading)
             .help("手动选择优先；已有回答与排队中的请求保留原模型。")
     }
 
@@ -125,7 +126,7 @@ struct ModelSettingsView: View {
         VStack(alignment: .leading, spacing: 24) {
             ForEach($configuration.modelConnections) { $connection in
                 if connection.id == selected {
-                    Text("供应商设置").font(.system(size: 17, weight: .semibold))
+                    Text(connection.displayName).font(.system(size: 17, weight: .semibold))
                     ConnectionEditor(connection: $connection, newModelName: Binding(
                         get: { modelDrafts[connection.id] ?? "" },
                         set: { modelDrafts[connection.id] = $0 }
