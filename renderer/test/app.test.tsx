@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Tooltip } from "radix-ui";
 import { App } from "../app.tsx";
+import { Conversation } from "../conversation/index.tsx";
 import { Settings, modelAdditionError, providerName } from "../settings.tsx";
 import { Markdown } from "../components/markdown.tsx";
 import { AssistantStore, StoreContext } from "../store.tsx";
-import type { AssistantSnapshot, AppConfiguration } from "../../shared/model.ts";
+import type { AssistantSnapshot, AppConfiguration, TimelineMessage } from "../../shared/model.ts";
 import type { DesktopBridge, Payload } from "../../shared/bridge.ts";
 
 const snapshot = (): AssistantSnapshot => ({
@@ -88,6 +89,81 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("preserved interactions", () => {
+  it("offers a jump to latest only while more conversation is below the viewport", async () => {
+    const { store, wrap } = setup();
+    const observe = vi.fn();
+    let resize: (() => void) | undefined;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: (entries: ResizeObserverEntry[]) => void) {
+          resize = () => callback([]);
+        }
+        observe = observe;
+        disconnect() {}
+      },
+    );
+    store.set({
+      messages: [{ id: "message", sequence: 1, role: "user", content: "你好" } as TimelineMessage],
+    });
+    const { container } = wrap(<Conversation active navigate={vi.fn()} />);
+    const viewport = container.querySelector<HTMLElement>(".timeline-scroll")!;
+    let viewportHeight = 300;
+    let scrollTop = 0;
+    Object.defineProperties(viewport, {
+      scrollHeight: { value: 600 },
+      clientHeight: { get: () => viewportHeight },
+      scrollTop: {
+        get: () => scrollTop,
+        set: (value: number) => (scrollTop = Math.min(value, 600 - viewportHeight)),
+      },
+    });
+    const latest = () => screen.queryByRole("button", { name: "跳转到最新消息" });
+    await waitFor(() => expect(observe).toHaveBeenCalledWith(viewport));
+    expect(latest()).toBeNull();
+
+    viewport.scrollTop = 0;
+    fireEvent.scroll(viewport);
+    fireEvent.click(screen.getByRole("button", { name: "跳转到最新消息" }));
+    expect(viewport.scrollTop).toBe(300);
+    fireEvent.scroll(viewport);
+    expect(latest()).toBeNull();
+
+    viewport.scrollTop = 0;
+    fireEvent.scroll(viewport);
+    expect(latest()).toBeTruthy();
+    viewportHeight = 600;
+    act(() => resize?.());
+    expect(latest()).toBeNull();
+  });
+  it("previews the matching conversation turn on hover and keyboard focus", async () => {
+    const { store, wrap } = setup();
+    const message = (sequence: number, role: string, interactionId: string, content: string) =>
+      ({ id: String(sequence), sequence, role, interactionId, content }) as TimelineMessage;
+    store.set({
+      messages: [
+        message(1, "user", "first", "第一问"),
+        message(2, "assistant", "first", "第一问的回答"),
+        message(3, "user", "second", "尚未回复的问题"),
+      ],
+    });
+    wrap(<Conversation active navigate={vi.fn()} />);
+    const user = userEvent.setup();
+    const first = screen.getByRole("button", { name: "跳转到：第一问" });
+    const second = screen.getByRole("button", { name: "跳转到：尚未回复的问题" });
+
+    await user.hover(first);
+    const preview = await screen.findByRole("tooltip");
+    expect(preview.textContent).toBe("第一问第一问的回答");
+    expect(first.getAttribute("data-state")).toMatch(/-open$/);
+    expect(second.getAttribute("aria-current")).toBe("true");
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("tooltip")).toBeNull();
+
+    act(() => second.focus());
+    expect((await screen.findByRole("tooltip")).textContent).toBe("尚未回复的问题");
+    expect(first.getAttribute("data-state")).toBe("closed");
+  });
   it("keeps an unsaved project until navigation is explicitly discarded", async () => {
     const { store, wrap } = setup();
     vi.spyOn(store, "start").mockResolvedValue();

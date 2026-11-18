@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, SquarePen } from "lucide-react";
+import { ArrowDown, ChevronDown, SquarePen } from "lucide-react";
+import { Tooltip } from "radix-ui";
 import { useAssistant } from "../store.tsx";
 import { activeQuestion } from "../../shared/conversation.ts";
 import { Button, Header, Menu, MenuItem, Picker } from "../components/ui.tsx";
@@ -8,6 +9,9 @@ import { Composer } from "./composer.tsx";
 import { Message } from "./message.tsx";
 import { Details } from "./details.tsx";
 import { Pending } from "./pending.tsx";
+
+const remainingScroll = (element: HTMLElement) =>
+  element.scrollHeight - element.clientHeight - element.scrollTop;
 
 export function Conversation({
   active,
@@ -32,6 +36,14 @@ export function Conversation({
     () => messages.filter((message) => filter === "*" || (message.projectId ?? "") === filter),
     [messages, filter],
   );
+  const replyPreviews = useMemo(() => {
+    const previews = new Map<string, string>();
+    for (const message of visible) {
+      if (message.role === "assistant" && message.interactionId && message.content.trim())
+        previews.set(message.interactionId, message.content.slice(0, 400));
+    }
+    return previews;
+  }, [visible]);
   const messageBySequence = useMemo(
     () =>
       new Map(
@@ -50,6 +62,7 @@ export function Conversation({
     ]),
   ].sort((a, b) => a - b);
   const selectedMessage = messages.find((message) => message.id === detailsId);
+  const questions = visible.filter((message) => message.role === "user");
   const activeSequence = activeQuestion(visible, visibleSequence, atBottom);
   useEffect(() => {
     const send = (event: KeyboardEvent) => {
@@ -105,7 +118,7 @@ export function Conversation({
             element.scrollTop +=
               anchor.getBoundingClientRect().top - element.getBoundingClientRect().top;
           else element.scrollTop = element.scrollHeight;
-          nearBottom.current = element.scrollHeight - element.clientHeight - element.scrollTop < 80;
+          nearBottom.current = remainingScroll(element) < 80;
         }
         setReady(true);
       });
@@ -115,12 +128,16 @@ export function Conversation({
     };
   }, [snapshot?.generation, store]);
   useLayoutEffect(() => {
-    if (!timeline.current) return;
-    const observer = new ResizeObserver(() => {
-      if (active && ready && nearBottom.current && scroll.current)
-        scroll.current.scrollTop = scroll.current.scrollHeight;
+    const viewport = scroll.current;
+    const content = timeline.current;
+    if (!active || !ready || !viewport || !content) return;
+    const observer = new ResizeObserver((entries) => {
+      if (nearBottom.current && entries.some((entry) => entry.target === content))
+        viewport.scrollTop = viewport.scrollHeight;
+      setAtBottom(remainingScroll(viewport) <= 1);
     });
-    observer.observe(timeline.current);
+    observer.observe(content);
+    observer.observe(viewport);
     return () => observer.disconnect();
   }, [active, ready]);
   useLayoutEffect(() => {
@@ -138,8 +155,9 @@ export function Conversation({
   const onScroll = () => {
     const element = scroll.current;
     if (!element || !active || !ready || !snapshot?.generation) return;
-    nearBottom.current = element.scrollHeight - element.clientHeight - element.scrollTop < 80;
-    setAtBottom(element.scrollHeight - element.clientHeight - element.scrollTop <= 1);
+    const remaining = remainingScroll(element);
+    nearBottom.current = remaining < 80;
+    setAtBottom(remaining <= 1);
     const top = element.getBoundingClientRect().top;
     const anchor = [...element.querySelectorAll<HTMLElement>("[data-sequence]")].find(
       (row) => row.getBoundingClientRect().bottom > top + 1,
@@ -313,32 +331,48 @@ export function Conversation({
                 ))}
             </div>
           </div>
-          {sequences.length > 0 && (
+          {questions.length > 0 && (
             <nav className="conversation-nav" aria-label="对话消息导航">
-              {visible
-                .filter((message) => message.role === "user")
-                .map((message) => (
-                  <button
-                    key={message.id}
-                    title={message.content}
-                    aria-label={`跳转到：${message.content.slice(0, 60)}`}
-                    aria-current={activeSequence === message.sequence ? "true" : undefined}
-                    onClick={() => jump(message.sequence)}
-                  >
-                    <span />
-                  </button>
-                ))}
-              <button
-                title="最新消息"
-                aria-label="跳转到最新消息"
-                onClick={() => {
-                  nearBottom.current = true;
-                  if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
-                }}
-              >
-                ↓
-              </button>
+              {questions.map((message) => {
+                const reply = replyPreviews.get(message.interactionId ?? "");
+                return (
+                  <Tooltip.Root key={message.id} delayDuration={0}>
+                    <Tooltip.Trigger
+                      type="button"
+                      aria-label={`跳转到：${message.content.slice(0, 60)}`}
+                      aria-current={activeSequence === message.sequence ? "true" : undefined}
+                      onClick={() => jump(message.sequence)}
+                    >
+                      <span />
+                    </Tooltip.Trigger>
+                    <Tooltip.Portal>
+                      <Tooltip.Content
+                        className="tooltip conversation-preview"
+                        side="right"
+                        sideOffset={10}
+                        collisionPadding={8}
+                      >
+                        <p>{message.content.slice(0, 240)}</p>
+                        {reply && <p>{reply}</p>}
+                      </Tooltip.Content>
+                    </Tooltip.Portal>
+                  </Tooltip.Root>
+                );
+              })}
             </nav>
+          )}
+          {ready && !atBottom && sequences.length > 0 && (
+            <Button
+              className="jump-to-latest"
+              title="最新消息"
+              aria-label="跳转到最新消息"
+              onClick={() => {
+                nearBottom.current = true;
+                if (scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight;
+              }}
+            >
+              <ArrowDown size={16} aria-hidden="true" />
+            </Button>
           )}
         </div>
         <Composer active={active} />
