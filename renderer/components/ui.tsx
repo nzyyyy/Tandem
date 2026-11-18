@@ -202,9 +202,9 @@ export function Modal({
             <Dialog.Title>{title}</Dialog.Title>
             <span className="spacer" />
             <Dialog.Close asChild>
-              <IconButton label="关闭" disabled={busy}>
-                <X size={16} />
-              </IconButton>
+              <Button kind="plain" className="icon-button" aria-label="关闭" disabled={busy}>
+                <X size={16} aria-hidden="true" />
+              </Button>
             </Dialog.Close>
           </div>
           {children}

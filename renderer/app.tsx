@@ -23,7 +23,7 @@ import { Button, IconButton, Modal, Notice, SelectionRow } from "./components/ui
 
 const pages = [
   { id: "assistant", title: "对话", Icon: MessagesSquare },
-  { id: "activity", title: "Activity", Icon: ListTodo },
+  { id: "activity", title: "活动", Icon: ListTodo },
   { id: "projects", title: "项目", Icon: Folder },
   { id: "memory", title: "长期记忆", Icon: Brain },
   { id: "settings", title: "模型设置", Icon: SlidersHorizontal },

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Tooltip } from "radix-ui";
 import { App } from "../app.tsx";
@@ -7,7 +7,12 @@ import { Conversation } from "../conversation/index.tsx";
 import { Settings, modelAdditionError, providerName } from "../settings.tsx";
 import { Markdown } from "../components/markdown.tsx";
 import { AssistantStore, StoreContext } from "../store.tsx";
-import type { AssistantSnapshot, AppConfiguration, TimelineMessage } from "../../shared/model.ts";
+import type {
+  ActivityRun,
+  AssistantSnapshot,
+  AppConfiguration,
+  TimelineMessage,
+} from "../../shared/model.ts";
 import type { DesktopBridge, Payload } from "../../shared/bridge.ts";
 
 const snapshot = (): AssistantSnapshot => ({
@@ -89,6 +94,120 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("preserved interactions", () => {
+  it("opens run outputs and shared approval details from the Activity layout", async () => {
+    const { store, request, wrap } = setup();
+    vi.spyOn(store, "start").mockResolvedValue();
+    const state = snapshot();
+    const run: ActivityRun = {
+      id: "run",
+      title: "整理会议纪要",
+      output_preview: "提取了行动项",
+      created_at: Date.now(),
+      status: "completed",
+      error_code: null,
+      project_id: null,
+      assistant_message_id: "result",
+      version: 1,
+      steps: 5,
+      tokens: 100,
+      active_ms: 17000,
+      step_limit: 24,
+      token_limit: 64000,
+      time_limit: 300000,
+      pause_reason: null,
+      estimated: 0,
+      modelName: "测试模型",
+      task_id: null,
+      revision: null,
+      stepsDetail: [],
+    };
+    state.activity.runs = [
+      {
+        ...run,
+        id: "waiting",
+        title: "整理访谈资料",
+        status: "waiting_approval",
+        assistant_message_id: "waiting-output",
+        output_preview: null,
+        task_id: "task",
+        revision: 1,
+      },
+      { ...run, id: "other", title: "整理其他资料", status: "waiting_approval" },
+      run,
+    ];
+    state.activity.approvals = [
+      {
+        id: "approval",
+        run_id: "waiting",
+        name: "request_directory",
+        args: '{"reason":"读取文本纪要"}',
+        expires_at: Date.now() + 600000,
+      },
+      {
+        id: "other-approval",
+        run_id: "other",
+        name: "request_directory",
+        args: '{"reason":"读取其他资料"}',
+        expires_at: Date.now() + 600000,
+      },
+    ];
+    state.activity.tasks = [
+      {
+        id: "task",
+        session_id: "session",
+        created_at: run.created_at,
+        project_id: null,
+        revision: 1,
+        status: "open",
+        deliverable: "访谈报告",
+        criteria: '["标注来源"]',
+        evidence: null,
+        result_ref: null,
+      },
+    ];
+    state.activity.grants = [
+      { id: "downloads", project_id: null, label: "Downloads", status: "inactive" },
+    ];
+    request.mockResolvedValueOnce({ ok: true, data: { content: "**完整行动项**" } });
+    store.set({ snapshot: state });
+    wrap(<App />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "活动" }));
+    const detailPanel = screen.getByRole("complementary", { name: "活动详情" });
+    const detail = within(detailPanel);
+    await user.click(screen.getByRole("button", { name: /整理会议纪要/ }));
+    expect(detail.getByText("提取了行动项")).toBeTruthy();
+    await user.click(detail.getByText("步骤、来源与用量"));
+    expect(detail.getByText(/步骤 5\/24/)).toBeTruthy();
+    await user.click(detail.getByRole("button", { name: "查看完整输出" }));
+    expect((await screen.findByRole("dialog")).textContent).toContain("完整行动项");
+    expect(request).toHaveBeenCalledWith("result.get", { messageId: "result" });
+    const close = screen.getByRole("button", { name: "关闭" });
+    await waitFor(() => expect(document.activeElement).toBe(close));
+    expect(screen.queryByRole("tooltip", { hidden: true })).toBeNull();
+    await user.click(close);
+
+    const attention = within(screen.getByRole("region", { name: "待处理的审批" }));
+    await user.click(attention.getByRole("button", { name: "处理审批" }));
+    expect(detail.getByText("读取文本纪要")).toBeTruthy();
+    expect(detail.getByText("读取其他资料")).toBeTruthy();
+    await user.click(screen.getByRole("tab", { name: "持续任务" }));
+    expect(detail.getByRole("heading", { name: "访谈报告" })).toBeTruthy();
+    expect(detail.getByText("标注来源")).toBeTruthy();
+    await user.click(detail.getByRole("button", { name: "处理审批" }));
+    expect(detail.getByText("读取文本纪要")).toBeTruthy();
+    expect(detail.queryByText("读取其他资料")).toBeNull();
+    expect(detail.getByRole("button", { name: "拒绝" })).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(detailPanel));
+    await user.click(detail.getByRole("button", { name: "返回列表" }));
+    await user.keyboard("{ArrowRight}");
+    expect(await detail.findByRole("heading", { name: "Downloads" })).toBeTruthy();
+    expect(detail.getByRole("button", { name: "重新选择同一目录" })).toBeTruthy();
+    await user.click(screen.getByRole("tab", { name: "执行记录" }));
+    expect(detail.getByRole("heading", { name: "整理会议纪要" })).toBeTruthy();
+  });
+
   it("offers a jump to latest only while more conversation is below the viewport", async () => {
     const { store, wrap } = setup();
     const observe = vi.fn();

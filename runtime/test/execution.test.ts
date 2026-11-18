@@ -278,6 +278,10 @@ test("M3 task completion checks all criteria, persists one result, revisions pre
     f.reply(1, "只是普通回答");
     await wait(() => f.row(second.runId).status === "completed");
     assert.equal(activity(f.service).tasks[0].status, "open");
+    assert.deepEqual(
+      activity(f.service).runs.map((run: any) => run.title),
+      ["修订报告", "Markdown 报告"],
+    );
     const history: any = f.service.dispatch("task.history", { surfaceId: "a", id: task.id });
     assert.equal(history.revisions.length, 2);
     assert.equal(history.revisions[1].result_ref, complete.result_ref);
@@ -308,6 +312,38 @@ test("M3 budget pauses original Run, retains completed tool output and resumes o
     await wait(() => f.row(runId).status === "completed");
     assert.equal(f.service.store.db.prepare("SELECT COUNT(*) AS n FROM tasks").get()!.n, 1);
     assert.ok(f.service.execution.progress(runId).tokens > before.tokens);
+  } finally {
+    await f.close();
+  }
+});
+
+test("Activity previews use stored run time and keep a corrected request in scope", async () => {
+  const f = await fixture();
+  try {
+    const original = f.service.dispatch("project.create", { title: "原项目" }) as { id: string };
+    const destination = f.service.dispatch("project.create", { title: "新项目" }) as { id: string };
+    f.service.dispatch("context.set", {
+      surfaceId: "a",
+      projectId: original.id,
+      mode: "isolated",
+      expectedVersion: f.service.store.focus("a").version,
+    });
+    const { runId } = f.send("整理会议纪要");
+    await wait(() => f.requests.length === 1);
+    f.reply(0, "结果".repeat(125));
+    await wait(() => f.row(runId).status === "completed");
+    const run = activity(f.service).runs[0];
+    assert.equal(run.title, "整理会议纪要");
+    assert.equal(run.created_at, f.row(runId).created_at);
+    assert.equal(run.output_preview, "结果".repeat(120));
+    f.service.dispatch("interaction.correct", {
+      surfaceId: "b",
+      interactionId: f.row(runId).interaction_id,
+      expectedVersion: f.row(runId).interaction_version,
+      projectId: destination.id,
+    });
+    const historicalRun = activity(f.service).runs.find((item: any) => item.id === runId);
+    assert.equal(historicalRun.title, null);
   } finally {
     await f.close();
   }

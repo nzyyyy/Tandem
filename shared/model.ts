@@ -134,6 +134,9 @@ export type ActivityState = {
 };
 export type ActivityRun = {
   id: string;
+  title: string | null;
+  output_preview: string | null;
+  created_at: number;
   status: string;
   error_code: string | null;
   project_id: string | null;
@@ -174,6 +177,7 @@ export type DirectoryGrant = {
 };
 export type PersistentTask = {
   id: string;
+  created_at: number;
   project_id: string | null;
   session_id: string;
   revision: number;

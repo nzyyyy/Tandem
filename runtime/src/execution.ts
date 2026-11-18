@@ -157,11 +157,20 @@ export class Execution {
     const f = this.store.focus(surfaceId);
     const allowed = (project: any) =>
       f.contextMode === "automatic" || (f.activeProjectId && project === f.activeProjectId);
+    // A corrected request follows its new project even when the old run remains in history.
     const runs: Row[] = this.db
       .prepare(
-        `SELECT r.id,r.status,r.error_code,r.project_id,r.assistant_message_id,r.binding_json,p.* FROM runs r JOIN run_progress p ON p.run_id=r.id ORDER BY r.created_at DESC,r.rowid DESC LIMIT 200`,
+        `SELECT r.id,r.status,r.error_code,r.project_id,r.assistant_message_id,r.binding_json,r.created_at,p.*,
+          substr(COALESCE(v.deliverable,CASE WHEN ? OR i.project_id IS r.project_id THEN u.content END),1,160) AS title,
+          substr(a.content,1,240) AS output_preview
+        FROM runs r JOIN run_progress p ON p.run_id=r.id
+        JOIN messages u ON u.id=r.user_message_id
+        LEFT JOIN messages a ON a.id=r.assistant_message_id
+        LEFT JOIN interactions i ON i.id=u.interaction_id
+        LEFT JOIN task_revisions v ON v.task_id=p.task_id AND v.revision=p.revision
+        ORDER BY r.created_at DESC,r.rowid DESC LIMIT 200`,
       )
-      .all()
+      .all(Number(f.contextMode === "automatic"))
       .filter((r) => allowed(r.project_id))
       .map((r) => {
         const { checkpoint, binding_json, ...rest } = r;

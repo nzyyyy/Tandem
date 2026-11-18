@@ -2,12 +2,13 @@ import { useAssistant } from "../store.tsx";
 import { Button } from "./ui.tsx";
 import { useAction } from "./actions.ts";
 
-export function Approvals() {
+export function Approvals({ runId }: { runId?: string }) {
   const { store, snapshot } = useAssistant();
   const { busy, run } = useAction();
   return (
     <>
       {snapshot?.activity.approvals.map((approval) => {
+        if (runId && approval.run_id !== runId) return null;
         let reason = "读取本地资料";
         try {
           reason = JSON.parse(approval.args).reason ?? reason;
